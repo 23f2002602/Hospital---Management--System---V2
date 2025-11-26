@@ -15,9 +15,9 @@ def create_doc():
     email = data.get("email")
     password = data.get("password")
     name = data.get("name")
-    specialization = data.get("specialization")
+    specialization = data.get("specialization", "")
 
-    if not email or not password or not name or not specialization:
+    if not email or not password or not name:
         return jsonify({"msg": "Missing required fields"}), 400
     
     if User.query.filter_by(email=email).first():
