@@ -1,11 +1,35 @@
-<!DOCTYPE html>
-<html lang="">
+<!doctype html>
+<html lang="en">
   <head>
-    <meta charset="UTF-8">
-    <link rel="icon" href="/favicon.ico">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vite App</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hospital Management</title>
+
+    <!-- Inline script to set initial theme before CSS loads (prevents flash) -->
+    <script>
+      (function() {
+        try {
+          const saved = localStorage.getItem('hms:theme');
+          if (saved === 'dark') {
+            document.documentElement.classList.add('theme-dark');
+          } else if (saved === 'light') {
+            document.documentElement.classList.add('theme-light');
+          } else {
+            // fallback to system preference
+            const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            document.documentElement.classList.toggle('theme-dark', prefersDark);
+            document.documentElement.classList.toggle('theme-light', !prefersDark);
+          }
+        } catch (e) {
+          console.warn('theme init failed', e);
+        }
+      })();
+    </script>
+
+    <link rel="stylesheet" href="/node_modules/bootstrap/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/src/styles.css">
   </head>
+  
   <body>
     <div id="app"></div>
     <script type="module" src="/src/main.js"></script>
