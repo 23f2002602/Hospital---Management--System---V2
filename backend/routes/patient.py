@@ -1,58 +1,287 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from models import Doctor, Appointment, Patient, UserRole
+from models import *
 from database import db
 from utils import role_required
 from datetime import datetime
 
 patient_bp = Blueprint("patient_bp", __name__)
 
-@patient_bp.route("/doctors", methods=["GET"])
-@jwt_required()
-@role_required([UserRole.PATIENT])
-def show_doctors():
-    docs = Doctor.query.all()
-    out = [{"id": d.id,
-            "name": d.user.name,
-            "specialization": d.specialization} for d in docs]
-    return jsonify(out), 200
+def _patient_id_from_token():
+    return int(get_jwt_identity())
 
-@patient_bp.route("/book", methods=["POST"])
+# ----------------- PROFILE ------------------------ #
+
+@patient_bp.route("/profile", methods=["GET"])
 @jwt_required()
 @role_required([UserRole.PATIENT])
-def book():
+def get_profile():
+    pid = _patient_id_from_token()
+    p = Patient.query.get_or_404(pid)
+    user = p.user
+    return jsonify({
+        "id": p.id,
+        "name": user.name,
+        "email": user.email,
+        "phone": p.phone,
+        "dob": p.dob.isoformat() if p.dob else None,
+        "gender": p.gender
+    }), 200
+
+# ----------------------------------------- #
+
+@patient_bp.route("/profile", methods=["PUT"])
+@jwt_required()
+@role_required([UserRole.PATIENT])
+def update_profile():
+    pid = _patient_id_from_token()
+    data = request.get_json() or {}
+    p = Patient.query.get_or_404(pid)
+    user = p.user
+    # update user fields
+    if data.get("name") is not None:
+        user.name = data.get("name")
+    if data.get("phone") is not None:
+        p.phone = data.get("phone")
+    if data.get("dob") is not None:
+        try:
+            p.dob = datetime.fromisoformat(data.get("dob")).date()
+        except:
+            return jsonify({"msg":"invalid dob format, use YYYY-MM-DD"}), 400
+    if data.get("gender") is not None:
+        p.gender = data.get("gender")
+    db.session.commit()
+    return jsonify({"msg":"profile updated"}), 200
+
+# ----------------- DOCTORS ------------------------ #
+
+@patient_bp.route("/doctors", methods=["GET"])
+@jwt_required(optional=True)
+def search_doctors():
+    """
+    Public endpoint to list doctors. Query params:
+      q=search by name or specialization
+      page, per_page
+    """
+    q = request.args.get("q","").strip()
+    page = int(request.args.get("page",1))
+    per_page = int(request.args.get("per_page",20))
+
+    query = Doctor.query.join(Doctor.user)
+    if q:
+        ilike = f"%{q.lower()}%"
+        query = query.filter(
+            db.or_(
+                db.func.lower(User.name).like(ilike),
+                db.func.lower(Doctor.specialization).like(ilike),
+                db.func.lower(User.email).like(ilike)
+            )
+        )
+    total = query.count()
+    docs = query.offset((page-1)*per_page).limit(per_page).all()
+    out = []
+    for d in docs:
+        out.append({
+            "id": d.id,
+            "name": d.user.name,
+            "email": d.user.email,
+            "specialization": d.specialization,
+            "department_id": d.department_id
+        })
+    return jsonify({"total": total, "page": page, "per_page": per_page, "doctors": out}), 200
+
+# ------------------ BOOKING ---------------------- #
+
+def _is_doctor_available_on(doctor_id:int, start_dt:datetime, end_dt:datetime):
+    """
+    Checks availability for the given doctor at the datetime range:
+      - If an override exists for the date: use override.is_available
+      - Otherwise use weekly availability entry and ensure start_time/end_time cover the slot
+      - Also ensure no overlapping appointments already booked with status booked
+    Returns (True/False, message)
+    """
+    # check overrides
+    d = start_dt.date()
+    ov = DoctorAvailabilityOverride.query.filter_by(doctor_id=doctor_id, date=d).first()
+    if ov:
+        if not ov.is_available:
+            return False, "Doctor not available (override)"
+        # if is_available True we allow (but no times provided) — continue to time checks below
+
+    # weekly availability
+    weekday = start_dt.strftime("%A")
+    wa = DoctorAvailability.query.filter_by(doctor_id=doctor_id, day_of_week=weekday).first()
+    if not wa or not wa.is_available:
+        return False, "Doctor not available on this weekday"
+
+    # if weekly has start_time/end_time, ensure requested slot inside
+    if wa.start_time and wa.end_time:
+        # convert to time
+        st = wa.start_time
+        en = wa.end_time
+        if not (st <= start_dt.time() and end_dt.time() <= en):
+            return False, "Requested time outside doctor's working hours"
+
+    # check overlapping appointments
+    overlapping = Appointment.query.filter(
+        Appointment.doctor_id==doctor_id,
+        Appointment.status=="booked",
+        db.or_(
+            db.and_(Appointment.start_time <= start_dt, Appointment.end_time > start_dt),
+            db.and_(Appointment.start_time < end_dt, Appointment.end_time >= end_dt),
+            db.and_(Appointment.start_time >= start_dt, Appointment.end_time <= end_dt)
+        )
+    ).first()
+    if overlapping:
+        return False, "Time slot already booked"
+    return True, "available"
+
+# -------- book appointment--------#
+
+@patient_bp.route("/appointments/book", methods=["POST"])
+@jwt_required()
+@role_required([UserRole.PATIENT])
+def book_appointment():
+    """
+    Body JSON:
+    {
+      "doctor_id": 2,
+      "start_time": "2025-12-01T10:00:00",
+      "end_time": "2025-12-01T10:30:00",
+      "problem": "cough"
+    }
+    """
+    pid = _patient_id_from_token()
     data = request.get_json() or {}
     doctor_id = data.get("doctor_id")
-    date = data.get("date")
-    start = data.get("start_time")
-    end = data.get("end_time")
+    start_s = data.get("start_time")
+    end_s = data.get("end_time")
     problem = data.get("problem", "")
 
-    if not doctor_id or not date or not start or not end:
-        return jsonify({"msg": "Missing required fields"}), 400
-    
-    start_dt = datetime.fromisoformat(start)
-    end_dt = datetime.fromisoformat(end)
+    if not doctor_id or not start_s or not end_s:
+        return jsonify({"msg":"doctor_id, start_time and end_time required"}), 400
+    try:
+        start_dt = datetime.fromisoformat(start_s)
+        end_dt = datetime.fromisoformat(end_s)
+    except:
+        return jsonify({"msg":"invalid datetime format, use ISO format"}), 400
 
-    conflict = Appointment.query.filter(
-        Appointment.doctor_id == doctor_id,
-        Appointment.status == "booked",
-        Appointment.start_time < end_dt,
-        Appointment.end_time > start_dt
-    ).first()
-    if conflict:
-        return jsonify({"msg": "The selected time slot is not available"}), 409
-    
-    identity = get_jwt_identity()
-    patient_id = identity["id"]
-    appo = Appointment(doctor_id=doctor_id, 
-                       patient_id=patient_id, 
-                       date = date,
-                       start_time=start, 
-                       end_time=end, 
-                       problem=problem)
-    db.session.add(appo)
+    if end_dt <= start_dt:
+        return jsonify({"msg":"end_time must be after start_time"}), 400
+
+    # check doctor exists
+    doctor = Doctor.query.get(doctor_id)
+    if not doctor:
+        return jsonify({"msg":"doctor not found"}), 404
+
+    ok, msg = _is_doctor_available_on(doctor_id, start_dt, end_dt)
+    if not ok:
+        return jsonify({"msg": msg}), 400
+
+    appt = Appointment(
+        doctor_id = doctor_id,
+        patient_id = pid,
+        start_time = start_dt,
+        end_time = end_dt,
+        status = "booked",
+        problem = problem,
+        date = start_dt.date()
+    )
+    db.session.add(appt)
     db.session.commit()
+    return jsonify({"msg":"appointment booked", "appointment_id": appt.id}), 201
 
-    return jsonify({"msg": "Appointment booked successfully", "appointment_id": appo.id}), 201
+# -------- reschedule appointment (patient only for their own) --------
 
+@patient_bp.route("/appointments/<int:appt_id>/reschedule", methods=["POST"])
+@jwt_required()
+@role_required([UserRole.PATIENT])
+def reschedule_appointment(appt_id):
+    pid = _patient_id_from_token()
+    data = request.get_json() or {}
+    start_s = data.get("start_time")
+    end_s = data.get("end_time")
+
+    if not start_s or not end_s:
+        return jsonify({"msg":"start_time and end_time required"}), 400
+    try:
+        start_dt = datetime.fromisoformat(start_s)
+        end_dt = datetime.fromisoformat(end_s)
+    except:
+        return jsonify({"msg":"invalid datetime format"}), 400
+
+    appt = Appointment.query.get_or_404(appt_id)
+    if appt.patient_id != pid:
+        return jsonify({"msg":"forbidden"}), 403
+    if appt.status != "booked":
+        return jsonify({"msg":"only booked appointments can be rescheduled"}), 400
+
+    ok, msg = _is_doctor_available_on(appt.doctor_id, start_dt, end_dt)
+    if not ok:
+        return jsonify({"msg":msg}), 400
+
+    appt.start_time = start_dt
+    appt.end_time = end_dt
+    appt.date = start_dt.date()
+    db.session.commit()
+    return jsonify({"msg":"appointment rescheduled"}), 200
+
+# -------- cancel appointment (patient) --------
+@patient_bp.route("/appointments/<int:appt_id>/cancel", methods=["POST"])
+@jwt_required()
+@role_required([UserRole.PATIENT])
+def cancel_appointment(appt_id):
+    pid = _patient_id_from_token()
+    appt = Appointment.query.get_or_404(appt_id)
+    if appt.patient_id != pid:
+        return jsonify({"msg":"forbidden"}), 403
+    if appt.status in ("cancelled", "completed"):
+        return jsonify({"msg":"cannot cancel"}), 400
+    appt.status = "cancelled"
+    db.session.commit()
+    return jsonify({"msg":"appointment cancelled"}), 200
+
+# -------- cancel appointment (patient) --------
+@patient_bp.route("/appointments/<int:appt_id>/cancel", methods=["POST"])
+@jwt_required()
+@role_required([UserRole.PATIENT])
+def cancel_appointment(appt_id):
+    pid = _patient_id_from_token()
+    appt = Appointment.query.get_or_404(appt_id)
+    if appt.patient_id != pid:
+        return jsonify({"msg":"forbidden"}), 403
+    if appt.status in ("cancelled", "completed"):
+        return jsonify({"msg":"cannot cancel"}), 400
+    appt.status = "cancelled"
+    db.session.commit()
+    return jsonify({"msg":"appointment cancelled"}), 200
+
+# -------- patient appointments (list) --------
+@patient_bp.route("/appointments", methods=["GET"])
+@jwt_required()
+@role_required([UserRole.PATIENT])
+def list_patient_appointments():
+    pid = _patient_id_from_token()
+    status = request.args.get("status")  # booked/completed/cancelled
+    q = Appointment.query.filter_by(patient_id=pid)
+    if status:
+        q = q.filter_by(status=status)
+    q = q.order_by(Appointment.start_time.desc())
+    appts = q.all()
+    out = []
+    for a in appts:
+        out.append({
+            "id": a.id,
+            "doctor_id": a.doctor_id,
+            "doctor_name": a.doctor.user.name if a.doctor and a.doctor.user else None,
+            "start_time": a.start_time.isoformat(),
+            "end_time": a.end_time.isoformat(),
+            "status": a.status,
+            "problem": a.problem,
+            "treatment": {
+                "diagnosis": a.treatment.diagnosis if a.treatment else None,
+                "prescription": a.treatment.prescription if a.treatment else None,
+                "notes": a.treatment.notes if a.treatment else None
+            }
+        })
+    return jsonify(out), 200
