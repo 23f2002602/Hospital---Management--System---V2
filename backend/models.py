@@ -56,6 +56,7 @@ class Patient(db.Model):
     id = db.Column(db.Integer, db.ForeignKey("user.id"), primary_key=True)
     phone = db.Column(db.String(40))
     dob = db.Column(db.Date)
+    gender = db.Column(db.String(10))
 
     user = db.relationship("User", back_populates="patient_profile")
 

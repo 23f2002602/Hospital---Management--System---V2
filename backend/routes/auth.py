@@ -14,6 +14,9 @@ def register():
     name = data.get("name")
     email = data.get("email")
     password = data.get("password")
+    phone = data.get("phone")
+    dob_str = data.get("dob")        
+    gender = data.get("gender")
 
     if not name or not email or not password:
         return jsonify({"msg": "Name, email, and password are required"}), 400
@@ -30,7 +33,20 @@ def register():
     db.session.add(user)
     db.session.commit()
 
-    patient = Patient(id=user.id)
+    dob_date = None
+    if dob_str:
+        try:
+            from datetime import datetime
+            dob_date = datetime.strptime(dob_str, "%Y-%m-%d").date()
+        except:
+            return jsonify({"msg": "Invalid dob format. Use YYYY-MM-DD"}), 400
+        
+    patient = Patient(
+        id=user.id,
+        phone=phone,
+        dob=dob_date,
+        gender=gender
+    )
     db.session.add(patient)
     db.session.commit()
 

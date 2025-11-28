@@ -153,5 +153,7 @@ def list_pats():
             "email": p.user.email,
             "name": p.user.name,
             "phone": p.phone
+            "dob" : p.dob.isoformat() if p.dob else None
+            "gender": p.gender
         })
     return jsonify(out), 200
