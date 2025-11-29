@@ -1,19 +1,30 @@
-from flask import Blueprint, request, jsonify
+# backend/routes/patient.py
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from models import *
 from database import db
+from models import *
 from utils import role_required
 from datetime import datetime
-from sqlalchemy import and_, or_, text
-
+from sqlalchemy import and_, or_
+from extensions import cache
+from cache_utils import cache_response
+from redis_utils import bump_namespace, get_namespace_version
 
 patient_bp = Blueprint("patient_bp", __name__)
 
 def _patient_id_from_token():
-    return int(get_jwt_identity())
+    try:
+        return int(get_jwt_identity())
+    except Exception:
+        return get_jwt_identity()
+
+# Helper: doctor search cache key (namespace versioning)
+def _doctor_search_key(q, page, per_page):
+    v = get_namespace_version("ns:doctors_search_version")
+    qnorm = (q or "").strip().lower()
+    return f"doctors:search:v={v}:q={qnorm}:page={page}:per={per_page}"
 
 # ----------------- PROFILE ------------------------ #
-
 @patient_bp.route("/profile", methods=["GET"])
 @jwt_required()
 @role_required([UserRole.PATIENT])
@@ -26,11 +37,9 @@ def get_profile():
         "name": user.name,
         "email": user.email,
         "phone": p.phone,
-        "dob": p.dob.isoformat() if p.dob else None,
+        "dob": p.dob.isoformat() if getattr(p, "dob", None) else None,
         "gender": p.gender
     }), 200
-
-# ----------------------------------------- #
 
 @patient_bp.route("/profile", methods=["PUT"])
 @jwt_required()
@@ -40,7 +49,6 @@ def update_profile():
     data = request.get_json() or {}
     p = Patient.query.get_or_404(pid)
     user = p.user
-    # update user fields
     if data.get("name") is not None:
         user.name = data.get("name")
     if data.get("phone") is not None:
@@ -48,26 +56,30 @@ def update_profile():
     if data.get("dob") is not None:
         try:
             p.dob = datetime.fromisoformat(data.get("dob")).date()
-        except:
+        except Exception:
             return jsonify({"msg":"invalid dob format, use YYYY-MM-DD"}), 400
     if data.get("gender") is not None:
         p.gender = data.get("gender")
     db.session.commit()
     return jsonify({"msg":"profile updated"}), 200
 
-# ----------------- DOCTORS ------------------------ #
-
+# ----------------- DOCTORS (cached search) ------------------------ #
 @patient_bp.route("/doctors", methods=["GET"])
 @jwt_required(optional=True)
+@cache_response(cache,
+    key_func=lambda *a, **k: _doctor_search_key(request.args.get("q",""), request.args.get("page",1), request.args.get("per_page",20)),
+    ttl_getter=lambda: current_app.config.get("DOCTOR_SEARCH_CACHE_TTL", 60)
+)
 def search_doctors():
-    """
-    Public endpoint to list doctors. Query params:
-      q=search by name or specialization
-      page, per_page
-    """
     q = request.args.get("q","").strip()
-    page = int(request.args.get("page",1))
-    per_page = int(request.args.get("per_page",20))
+    try:
+        page = int(request.args.get("page",1))
+    except Exception:
+        page = 1
+    try:
+        per_page = int(request.args.get("per_page",20))
+    except Exception:
+        per_page = 20
 
     query = Doctor.query.join(Doctor.user)
     if q:
@@ -90,41 +102,27 @@ def search_doctors():
             "specialization": d.specialization,
             "department_id": d.department_id
         })
-    return jsonify({"total": total, "page": page, "per_page": per_page, "doctors": out}), 200
+    return {"total": total, "page": page, "per_page": per_page, "doctors": out}, 200
 
 # ------------------ BOOKING ---------------------- #
-
 def _is_doctor_available_on(doctor_id:int, start_dt:datetime, end_dt:datetime):
-    """
-    Checks availability for the given doctor at the datetime range:
-      - If an override exists for the date: use override.is_available
-      - Otherwise use weekly availability entry and ensure start_time/end_time cover the slot
-      - Also ensure no overlapping appointments already booked with status booked
-    Returns (True/False, message)
-    """
-    # check overrides
     d = start_dt.date()
     ov = DoctorAvailabilityOverride.query.filter_by(doctor_id=doctor_id, date=d).first()
     if ov:
         if not ov.is_available:
             return False, "Doctor not available (override)"
-        # if is_available True we allow (but no times provided) — continue to time checks below
 
-    # weekly availability
     weekday = start_dt.strftime("%A")
     wa = DoctorAvailability.query.filter_by(doctor_id=doctor_id, day_of_week=weekday).first()
     if not wa or not wa.is_available:
         return False, "Doctor not available on this weekday"
 
-    # if weekly has start_time/end_time, ensure requested slot inside
     if wa.start_time and wa.end_time:
-        # convert to time
         st = wa.start_time
         en = wa.end_time
         if not (st <= start_dt.time() and end_dt.time() <= en):
             return False, "Requested time outside doctor's working hours"
 
-    # check overlapping appointments
     overlapping = Appointment.query.filter(
         Appointment.doctor_id==doctor_id,
         Appointment.status=="booked",
@@ -138,21 +136,10 @@ def _is_doctor_available_on(doctor_id:int, start_dt:datetime, end_dt:datetime):
         return False, "Time slot already booked"
     return True, "available"
 
-# -------- book appointment--------#
-
 @patient_bp.route("/appointments/book", methods=["POST"])
 @jwt_required()
 @role_required([UserRole.PATIENT])
 def book_appointment():
-    """
-    Body JSON:
-    {
-      "doctor_id": 2,
-      "start_time": "2025-12-01T10:00:00",
-      "end_time": "2025-12-01T10:30:00",
-      "problem": "cough"
-    }
-    """
     pid = _patient_id_from_token()
     data = request.get_json() or {}
     doctor_id = data.get("doctor_id")
@@ -165,7 +152,7 @@ def book_appointment():
     try:
         start_dt = datetime.fromisoformat(start_s)
         end_dt = datetime.fromisoformat(end_s)
-    except:
+    except Exception:
         return jsonify({"msg":"invalid datetime format, use ISO format"}), 400
 
     if end_dt <= start_dt:
@@ -175,16 +162,12 @@ def book_appointment():
     if not doctor:
         return jsonify({"msg":"doctor not found"}), 404
 
-   
     ok, msg = _is_doctor_available_on(doctor_id, start_dt, end_dt)
     if not ok:
         return jsonify({"msg": msg}), 400
 
-    # NOW perform transactional overlap check + insert to reduce race conditions
     try:
-        with db.session.begin():  # transaction
-            # Lock overlapping appointments for this doctor (if DB supports FOR UPDATE)
-            # Build overlap filter:
+        with db.session.begin():
             overlap_filter = and_(
                 Appointment.doctor_id == doctor_id,
                 Appointment.status == "booked",
@@ -195,17 +178,13 @@ def book_appointment():
                 )
             )
 
-            # Try to select any overlapping rows and lock them
-            # On Postgres: .with_for_update() will generate FOR UPDATE
             overlapping_q = Appointment.query.filter(overlap_filter)
             try:
                 overlapping = overlapping_q.with_for_update(nowait=False).first()
             except Exception:
-                # some DBs (SQLite) may not support FOR UPDATE — fall back to plain read
                 overlapping = overlapping_q.first()
 
             if overlapping:
-                # someone else booked the slot
                 return jsonify({"msg":"Time slot already booked"}), 400
 
             appt = Appointment(
@@ -218,17 +197,19 @@ def book_appointment():
                 date = start_dt.date()
             )
             db.session.add(appt)
-            appt_id = appt.id
             db.session.flush()
             appt_id = appt.id
 
-        return jsonify({"msg":"appointment booked", "appointment_id": appt.id}), 201
+        # bump availability namespace for this doctor
+        try:
+            bump_namespace(f"ns:doctor:{doctor_id}:availability_version")
+        except Exception:
+            current_app.logger.exception("Failed to bump availability namespace after booking")
+
+        return jsonify({"msg":"appointment booked", "appointment_id": appt_id}), 201
     except Exception as e:
         db.session.rollback()
         return jsonify({"msg":"booking failed", "error": str(e)}), 500
-    
-
-# -------- reschedule appointment (patient only for their own) --------
 
 @patient_bp.route("/appointments/<int:appt_id>/reschedule", methods=["POST"])
 @jwt_required()
@@ -244,7 +225,7 @@ def reschedule_appointment(appt_id):
     try:
         start_dt = datetime.fromisoformat(start_s)
         end_dt = datetime.fromisoformat(end_s)
-    except:
+    except Exception:
         return jsonify({"msg":"invalid datetime format"}), 400
 
     appt = Appointment.query.get_or_404(appt_id)
@@ -262,7 +243,7 @@ def reschedule_appointment(appt_id):
             overlap_filter = and_(
                 Appointment.doctor_id == appt.doctor_id,
                 Appointment.status == "booked",
-                Appointment.id != appt.id,  # exclude current appointment
+                Appointment.id != appt.id,
                 or_(
                     and_(Appointment.start_time <= start_dt, Appointment.end_time > start_dt),
                     and_(Appointment.start_time < end_dt, Appointment.end_time >= end_dt),
@@ -279,20 +260,23 @@ def reschedule_appointment(appt_id):
             if overlapping:
                 return jsonify({"msg":"Time slot already booked"}), 400
 
-            # update appointment
             appt.start_time = start_dt
             appt.end_time = end_dt
             appt.date = start_dt.date()
             db.session.add(appt)
             db.session.flush()
 
-        return jsonify({"msg":"appointment rescheduled"}), 200
+        # bump availability namespace for this doctor
+        try:
+            bump_namespace(f"ns:doctor:{appt.doctor_id}:availability_version")
+        except Exception:
+            current_app.logger.exception("Failed to bump availability namespace after reschedule")
 
+        return jsonify({"msg":"appointment rescheduled"}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"msg":"reschedule failed", "error": str(e)}), 500
 
-# -------- cancel appointment (patient) --------
 @patient_bp.route("/appointments/<int:appt_id>/cancel", methods=["POST"])
 @jwt_required()
 @role_required([UserRole.PATIENT])
@@ -304,25 +288,16 @@ def cancel_appointment(appt_id):
     if appt.status in ("cancelled", "completed"):
         return jsonify({"msg":"cannot cancel"}), 400
     appt.status = "cancelled"
+    db.session.add(appt)
     db.session.commit()
-    return jsonify({"msg":"appointment cancelled"}), 200
 
-# -------- cancel appointment (patient) --------
-@patient_bp.route("/appointments/<int:appt_id>/cancel", methods=["POST"])
-@jwt_required()
-@role_required([UserRole.PATIENT])
-def cancel_appointment(appt_id):
-    pid = _patient_id_from_token()
-    appt = Appointment.query.get_or_404(appt_id)
-    if appt.patient_id != pid:
-        return jsonify({"msg":"forbidden"}), 403
-    if appt.status in ("cancelled", "completed"):
-        return jsonify({"msg":"cannot cancel"}), 400
-    appt.status = "cancelled"
-    db.session.commit()
-    return jsonify({"msg":"appointment cancelled"}), 200
+    # bump availability namespace
+    try:
+        bump_namespace(f"ns:doctor:{appt.doctor_id}:availability_version")
+    except Exception:
+        current_app.logger.exception("Failed to bump availability namespace after cancel")
 
-# -------- patient appointments (list) --------
+    return jsonify({"msg":"appointment cancelled"}), 200
 
 @patient_bp.route("/appointments/history", methods=["GET"])
 @jwt_required()
@@ -337,8 +312,8 @@ def patient_full_history():
                 "id": a.id,
                 "doctor_id": a.doctor_id,
                 "doctor_name": a.doctor.user.name if a.doctor and a.doctor.user else None,
-                "start_time": a.start_time.isoformat(),
-                "end_time": a.end_time.isoformat(),
+                "start_time": a.start_time.isoformat() if a.start_time else None,
+                "end_time": a.end_time.isoformat() if a.end_time else None,
                 "status": a.status,
                 "problem": a.problem
             },
@@ -347,8 +322,7 @@ def patient_full_history():
                 "diagnosis": a.treatment.diagnosis if a.treatment else None,
                 "prescription": a.treatment.prescription if a.treatment else None,
                 "notes": a.treatment.notes if a.treatment else None,
-                "created_at": a.treatment.created_at.isoformat() if a.treatment else None
+                "created_at": a.treatment.created_at.isoformat() if a.treatment and getattr(a.treatment, "created_at", None) else None
             }
         })
     return jsonify({"history": phist}), 200
-

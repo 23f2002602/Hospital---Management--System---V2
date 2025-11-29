@@ -4,8 +4,9 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from celery.result import AsyncResult
 from tasks import export_treatment_history, generate_monthly_report, send_daily_reminders
 from utils import role_required
-from models import UserRole, Patient, Doctor
+from models import *
 from database import db
+import os
 
 tasks_bp = Blueprint("tasks_bp", __name__)
 

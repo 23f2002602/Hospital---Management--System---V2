@@ -26,8 +26,11 @@ class Config:
 
     # Report generation settings
     ENABLE_PDF_REPORTS = False
-    
+
     #---Caching Config---
     CACHE_TYPE = "RedisCache"
     CACHE_REDIS_URL = "redis://localhost:6379/2"
     
+    DEFAULT_CACHE_TTL = 300            # 5 minutes
+    AVAILABILITY_CACHE_TTL = 300       # 5 minutes
+    DOCTOR_SEARCH_CACHE_TTL = 60       # 1 minute

@@ -1,46 +1,62 @@
-from flask import Blueprint, request, jsonify, send_file
+# backend/routes/doctor.py
+from flask import Blueprint, request, jsonify, send_file, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import *
 from database import db
 from utils import role_required
-from datetime import datetime, date, timedelta, time
+from datetime import datetime, date, timedelta, time as dt_time
+from extensions import cache
+from cache_utils import cache_response
+from redis_utils import bump_namespace, get_namespace_version
 import io, csv
 
 doctor_bp = Blueprint("doctor_bp", __name__)
 
-#----------#
+def _avail_cache_key(doctor_id: int):
+    v = get_namespace_version(f"ns:doctor:{doctor_id}:availability_version")
+    return f"doctor:{doctor_id}:availability:v={v}"
+
+def _avail_next7_key(doctor_id: int):
+    v = get_namespace_version(f"ns:doctor:{doctor_id}:availability_version")
+    return f"doctor:{doctor_id}:availability:next7:v={v}"
 
 def _doctor_id_from_token():
-    return get_jwt_identity()
+    ident = get_jwt_identity()
+    try:
+        return int(ident)
+    except Exception:
+        return ident
 
-# ---------- APPOINTMENTS ---------- #
-
+# APPOINTMENTS LIST
 @doctor_bp.route("/appointments", methods=["GET"])
 @jwt_required()
 @role_required([UserRole.DOCTOR])
 def list_appointments():
     doctor_id = _doctor_id_from_token()
     q = Appointment.query.filter_by(doctor_id=doctor_id)
+
     status = request.args.get("status")
     if status:
         q = q.filter_by(status=status)
+
     frm = request.args.get("from")
     to = request.args.get("to")
     if frm:
         try:
-            frm_date = datetime.fromisoformat(frm)
-            q = q.filter(Appointment.date >= frm_date)
-        except:
+            frm_dt = datetime.fromisoformat(frm)
+            q = q.filter(Appointment.start_time >= frm_dt)
+        except Exception:
             pass
     if to:
         try:
-            to_date = datetime.fromisoformat(to)
-            q = q.filter(Appointment.date <= to_date)
-        except:
+            to_dt = datetime.fromisoformat(to)
+            q = q.filter(Appointment.start_time <= to_dt)
+        except Exception:
             pass
+
     upcoming = request.args.get("upcoming")
     if upcoming and upcoming.lower() in ("1", "true", "yes"):
-        q = q.filter(Appointment.start_time >= datetime)
+        q = q.filter(Appointment.start_time >= datetime.utcnow())
 
     q = q.order_by(Appointment.start_time.asc())
     appts = q.all()
@@ -50,36 +66,34 @@ def list_appointments():
             "id": a.id,
             "patient_id": a.patient_id,
             "patient_name": getattr(a.patient.user, "name", None),
-            "start_time": a.start_time.isoformat(),
-            "end_time": a.end_time.isoformat(),
-            "date": a.date.isoformat(),
-            "status": a.status
+            "start_time": a.start_time.isoformat() if a.start_time else None,
+            "end_time": a.end_time.isoformat() if a.end_time else None,
+            "date": a.date.isoformat() if a.date else (a.start_time.date().isoformat() if a.start_time else None),
+            "status": a.status,
             "problem": a.problem
         })
     return jsonify(result), 200
 
-# ------------------------------------------- #
-
-@doctor_bp.route("/appointments/<int:appt_id>/treatement", methods=["POST"])
+# TREATMENT
+@doctor_bp.route("/appointments/<int:appt_id>/treatment", methods=["POST"])
 @jwt_required()
 @role_required([UserRole.DOCTOR])
-def treatement(appt_id):
+def treatment(appt_id):
     doctor_id = _doctor_id_from_token()
     data = request.get_json() or {}
 
     diagnosis = data.get("diagnosis", "")
-    prescription = data.get("prescription")
+    prescription = data.get("prescription", "")
+    notes = data.get("notes", "")
+
     if not prescription:
-        return jsonify({"msg": "Missing required fields"}), 400
+        return jsonify({"msg": "Missing required fields: prescription"}), 400
 
     appt = Appointment.query.get_or_404(appt_id)
     if appt.doctor_id != doctor_id:
         return jsonify({"msg": "Unauthorized"}), 403
     if appt.status == "completed":
         return jsonify({"msg":"already completed"}), 400
-    
-    appt.status = "completed"
-    db.session.add(appt)
 
     if appt.treatment:
         return jsonify({"msg": "Treatment already recorded for this appointment"}), 400
@@ -88,15 +102,22 @@ def treatement(appt_id):
         appointment_id=appt.id,
         diagnosis=diagnosis,
         prescription=prescription,
-        notes = data.get("notes","")
+        notes=notes
     )
+    appt.status = "completed"
     db.session.add(treatment)
+    db.session.add(appt)
     db.session.commit()
+
+    # bump availability namespace so caches invalidate
+    try:
+        bump_namespace(f"ns:doctor:{doctor_id}:availability_version")
+    except Exception:
+        current_app.logger.exception("Failed to bump availability namespace after treatment")
 
     return jsonify({"msg": "Treatment recorded successfully and appointment completed"}), 201
 
-# ------------------------------- #
-
+# CANCEL APPOINTMENT
 @doctor_bp.route("/appointments/<int:appt_id>/cancel", methods=["POST"])
 @jwt_required()
 @role_required([UserRole.DOCTOR])
@@ -107,38 +128,35 @@ def cancel_appointment(appt_id):
         return jsonify({"msg": "Unauthorized"}), 403
     if appt.status == "completed":
         return jsonify({"msg":"cannot cancel completed appointment"}), 400
-    
-    appt.status = "canceled"
+
+    appt.status = "cancelled"
     db.session.add(appt)
     db.session.commit()
 
-    return jsonify({"msg": "Appointment canceled successfully"}), 200
+    # bump availability namespace
+    try:
+        bump_namespace(f"ns:doctor:{doctor_id}:availability_version")
+    except Exception:
+        current_app.logger.exception("Failed to bump availability namespace after cancel")
 
-# ---------- PATIENT LIST AND HISTORY ----------- #
+    return jsonify({"msg": "Appointment cancelled successfully"}), 200
 
+# PATIENT LIST & HISTORY
 @doctor_bp.route("/patients", methods=["GET"])
 @jwt_required()
 @role_required([UserRole.DOCTOR])
 def list_patients():
     doctor_id = _doctor_id_from_token()
-    """
-        List distinct patients assigned to this doctor (via appointments).
-        Query params:
-        - q: search name/email
-        - page: page number (1-based)
-        - per_page: items per page (default 20, max 100)
-        Returns JSON: { total, page, per_page, total_pages, patients: [...] }
-    """
     qstr = request.args.get("q", "").strip()
     try:
-        page = int(request.arges.get("page", "1"))
-    except(TypeError, ValueError):
+        page = int(request.args.get("page", "1"))
+    except Exception:
         page = 1
     try:
         per_page = int(request.args.get("per_page", "20"))
-    except(TypeError, ValueError):
+    except Exception:
         per_page = 20
-    
+
     patient_ids_subq = (
         db.session.query(Appointment.patient_id)
         .filter_by(doctor_id=doctor_id)
@@ -157,6 +175,7 @@ def list_patients():
                 db.func.lower(User.email).like(ilike_term),
             )
         )
+
     total = patient_q.count()
 
     patients = (
@@ -169,38 +188,37 @@ def list_patients():
 
     plist = []
     for p in patients:
+        dob = getattr(p, "dob", None) or getattr(p, "date_of_birth", None)
+        phone = getattr(p, "phone", None) or getattr(p, "contact_number", None)
         plist.append({
             "id": p.id,
-            "name": p.user.name,
-            "email": p.user.email,
-            "date_of_birth": p.date_of_birth.isoformat() if p.date_of_birth else None,
-            "gender": p.gender,
-            "contact_number": p.contact_number
+            "name": p.user.name if p.user else None,
+            "email": p.user.email if p.user else None,
+            "date_of_birth": dob.isoformat() if dob else None,
+            "gender": getattr(p, "gender", None),
+            "contact_number": phone
         })
 
     return jsonify({"total": total, "page": page, "per_page": per_page, "patients": plist}), 200
-
-# ------------------------------------------- #
 
 @doctor_bp.route("/patients/<int:patient_id>/history", methods=["GET"])
 @jwt_required()
 @role_required([UserRole.DOCTOR])
 def patient_history(patient_id):
     doctor_id = _doctor_id_from_token()
-
     assigned = Appointment.query.filter_by(doctor_id=doctor_id, patient_id=patient_id).first()
     if not assigned:
         return jsonify({"msg": "Unauthorized"}), 403
-    
-    appts = Appointment.query.filter_by(patient_id = patient_id).order_by(Appointment.start_time.desc()).all()
+
+    appts = Appointment.query.filter_by(patient_id=patient_id).order_by(Appointment.start_time.desc()).all()
     phist = []
     for a in appts:
         phist.append({
             "appointment": {
                 "id": a.id,
                 "doctor_id": a.doctor_id,
-                "start_time": a.start_time.isoformat(),
-                "end_time": a.end_time.isoformat(),
+                "start_time": a.start_time.isoformat() if a.start_time else None,
+                "end_time": a.end_time.isoformat() if a.end_time else None,
                 "status": a.status,
                 "problem": a.problem
             },
@@ -213,19 +231,15 @@ def patient_history(patient_id):
         })
     return jsonify({"history": phist}), 200
 
-# -----------------AVAILABILITY------------------------ #
-
+# AVAILABILITY (cached)
 @doctor_bp.route("/availability/next", methods=["GET"])
 @jwt_required()
 @role_required([UserRole.DOCTOR])
+@cache_response(cache,
+    key_func=lambda *a, **k: _avail_next7_key(int(get_jwt_identity())),
+    ttl_getter=lambda: current_app.config.get("AVAILABILITY_CACHE_TTL", 300)
+)
 def next_available_slot():
-    """
-    Return combined availability for next 7 days:
-      - consult weekly availability entries (DoctorAvailability)
-      - consult overrides (DoctorAvailabilityOverride)
-    Output: { date: YYYY-MM-DD, day: Monday, is_available: bool, start_time, end_time }
-    """
-
     doctor_id = _doctor_id_from_token()
     weekly = {a.day_of_week: a for a in DoctorAvailability.query.filter_by(doctor_id=doctor_id).all()}
     overrides = {ov.date: ov for ov in DoctorAvailabilityOverride.query.filter_by(doctor_id=doctor_id).all()}
@@ -257,61 +271,61 @@ def next_available_slot():
             "start_time": start,
             "end_time": end
         })
-    return jsonify(result), 200
-
-#------------------------------------------- #
+    return result, 200
 
 @doctor_bp.route("/availability/week", methods=["POST"])
 @jwt_required()
 @role_required([UserRole.DOCTOR])
 def set_weekly_availability():
-    """
-    Accepts list of availability objects:
-    [{ "day_of_week":"Monday","start_time":"09:00","end_time":"12:00","is_available":true }, ...]
-    This will upsert entries for the doctor for those days.
-    """
     doctor_id = _doctor_id_from_token()
-    data = request.get_json() or []
+    data = request.get_json() or {}
     entries = data.get("entries") or []
     if not isinstance(entries, list):
-        return jsonify({"msg": "entries list required"}), 400
-    
-    for entry in entries:
-        day = entry.get("day_of_week")
+        return jsonify({"msg":"entries list required"}), 400
+
+    for ent in entries:
+        day = ent.get("day_of_week")
         if not day:
             continue
-        start = entry.get("start_time")
-        end = entry.get("end_time")
-        is_avail = entry.get("is_available", False)
-        
+        start = ent.get("start_time")
+        end = ent.get("end_time")
+        is_avail = bool(ent.get("is_available", True))
+
         st = None
-        et = None
+        en = None
         try:
             if start:
-                h,m = map(int, start.split(":"))
-                st = time(hour=h, minute=m)
+                h, m = map(int, start.split(":"))
+                st = dt_time(hour=h, minute=m)
             if end:
-                h,m = map(int, end.split(":"))
-                en = time(hour=h, minute=m)
-        except:
+                h, m = map(int, end.split(":"))
+                en = dt_time(hour=h, minute=m)
+        except Exception:
             continue
-        existing = DoctorAvailability.query.filter_by(doctor_id=doctor_id, day_of_week=day).first()
-        if existing:
-            existing.start_time = st
-            existing.end_time = en
-            existing.is_available = is_avail
-        else:
-            na = DoctorAvailability(doctor_id=doctor_id, day_of_week=day, start_time=st, end_time=en, is_available=is_avail)
-            db.session.add(na)
-    db.session.commit()
-    return jsonify({"msg":"weekly availability updated"}), 200
 
-#------------------------------------------- #
+        entry = DoctorAvailability.query.filter_by(doctor_id=doctor_id, day_of_week=day).first()
+        if entry:
+            entry.start_time = st
+            entry.end_time = en
+            entry.is_available = is_avail
+        else:
+            entry = DoctorAvailability(doctor_id=doctor_id, day_of_week=day, start_time=st, end_time=en, is_available=is_avail)
+            db.session.add(entry)
+
+    db.session.commit()
+
+    # bump availability namespace
+    try:
+        bump_namespace(f"ns:doctor:{doctor_id}:availability_version")
+    except Exception:
+        current_app.logger.exception("Failed to bump availability namespace after weekly update")
+
+    return jsonify({"msg":"weekly availability updated"}), 200
 
 @doctor_bp.route("/availability/override", methods=["POST"])
 @jwt_required()
 @role_required([UserRole.DOCTOR])
-def set_overrine():
+def set_override():
     doctor_id = _doctor_id_from_token()
     data = request.get_json() or {}
     date_s = data.get("date")
@@ -319,7 +333,7 @@ def set_overrine():
         return jsonify({"msg":"date required"}), 400
     try:
         dobj = date.fromisoformat(date_s)
-    except:
+    except Exception:
         return jsonify({"msg":"invalid date format"}), 400
     is_avail = bool(data.get("is_available", False))
     existing = DoctorAvailabilityOverride.query.filter_by(doctor_id=doctor_id, date=dobj).first()
@@ -328,22 +342,37 @@ def set_overrine():
     else:
         db.session.add(DoctorAvailabilityOverride(doctor_id=doctor_id, date=dobj, is_available=is_avail))
     db.session.commit()
+
+    # bump availability namespace
+    try:
+        bump_namespace(f"ns:doctor:{doctor_id}:availability_version")
+    except Exception:
+        current_app.logger.exception("Failed to bump availability namespace after override update")
+
     return jsonify({"msg":"override saved"}), 200
 
-# ---------- export (CSV) and notifications (stubs) ----------
-
+# EXPORT (CSV)
 @doctor_bp.route("/appointments/export", methods=["GET"])
 @jwt_required()
 @role_required([UserRole.DOCTOR])
 def export_appointments_csv():
     doctor_id = _doctor_id_from_token()
     appts = Appointment.query.filter_by(doctor_id=doctor_id).order_by(Appointment.start_time).all()
-    # create CSV in memory
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["id","patient_id","patient_name","start_time","end_time","status","problem"])
     for a in appts:
-        writer.writerow([a.id, a.patient_id, a.patient.user.name if a.patient and a.patient.user else "", a.start_time.isoformat(), a.end_time.isoformat(), a.status, a.problem or ""])
+        writer.writerow([
+            a.id,
+            a.patient_id,
+            a.patient.user.name if a.patient and a.patient.user else "",
+            a.start_time.isoformat() if a.start_time else "",
+            a.end_time.isoformat() if a.end_time else "",
+            a.status,
+            a.problem or ""
+        ])
     output.seek(0)
-    return send_file(io.BytesIO(output.getvalue().encode("utf-8")), mimetype="text/csv",
-                     download_name=f"appointments_doctor_{doctor_id}.csv", as_attachment=True)
+    return send_file(io.BytesIO(output.getvalue().encode("utf-8")),
+                     mimetype="text/csv",
+                     download_name=f"appointments_doctor_{doctor_id}.csv",
+                     as_attachment=True)
