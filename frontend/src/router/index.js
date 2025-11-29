@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { decodeJwt } from "../api/api";
 
+// Lazy-loaded pages/components
 const Home = () => import("../pages/Home.vue");
 const Login = () => import("../pages/Login.vue");
 const Register = () => import("../pages/Register.vue");
@@ -9,6 +10,8 @@ const AdminDashboard = () => import("../components/AdminDashboard.vue");
 const DoctorDashboard = () => import("../components/DoctorDashboard.vue");
 const DoctorPatients = () => import("../components/DoctorPatients.vue");
 const PatientDashboard = () => import("../components/PatientDashboard.vue");
+
+const Reports = () => import("../pages/Reports.vue");   
 
 const NotFound = () => import("../pages/NotFound.vue");
 
@@ -48,13 +51,22 @@ const routes = [
     meta: { requiresAuth: true, roles: ["patient"] },
   },
 
-  // Wildcard (NotFound)
+  // Reports (Admin + Doctor only)
+  {
+    path: "/reports",
+    name: "reports",
+    component: Reports,
+    meta: { requiresAuth: true, roles: ["admin", "doctor"] },
+  },
+
+  // Wildcard
   {
     path: "/:pathMatch(.*)*",
     name: "404",
     component: NotFound,
   },
 ];
+
 
 // ----------------------------
 // ROUTER

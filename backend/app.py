@@ -7,6 +7,7 @@ from routes.admin import admin_bp
 from routes.doctor import doctor_bp
 from routes.patient import patient_bp
 from routes.tasks import tasks_bp
+from routes.reports import reports_bp
 
 def create_app():
     app = Flask(__name__, instance_relative_config=False)
@@ -23,6 +24,7 @@ def create_app():
     app.register_blueprint(doctor_bp, url_prefix="/api/doctor")
     app.register_blueprint(patient_bp, url_prefix="/api/patient")
     app.register_blueprint(tasks_bp, url_prefix="/api/tasks")
+    app.register_blueprint(reports_bp, url_prefix="/api/reports")
 
     @app.get("/")
     def index():
