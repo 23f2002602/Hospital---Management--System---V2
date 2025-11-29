@@ -8,6 +8,13 @@ def make_celery(app):
     )
     celery.conf.update(app.config)
 
+    celery.conf.beat_schedule = {
+        "daily-appointment-reminders": {
+            "task": "tasks.send_daily_reminders",
+            "schedule": app.config.get("CELERY_REMINDER_CRON", 86400),  # default once per 86400s; override below if needed
+        },
+  }
+
     class ContextTask(celery.Task):
         def __call__(self, *args, **kwargs):
             with app.app_context():
