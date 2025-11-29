@@ -157,3 +157,33 @@ def list_pats():
             "gender": p.gender
         })
     return jsonify(out), 200
+
+@admin_bp.route("/patient/<int:patient_id>/history", methods=["GET"])
+@jwt_required()
+@role_required([UserRole.ADMIN])
+def admin_patient_history(patient_id):
+    appts = Appointment.query.filter_by(patient_id=patient_id).order_by(Appointment.start_time.desc()).all()
+    assigned = Appointment.query.filter_by(doctor_id=doctor_id, patient_id=patient_id).first()
+    if not assigned:
+        return jsonify({"msg": "Unauthorized"}), 403
+    
+    appts = Appointment.query.filter_by(patient_id = patient_id).order_by(Appointment.start_time.desc()).all()
+    phist = []
+    for a in appts:
+        phist.append({
+            "appointment": {
+                "id": a.id,
+                "doctor_id": a.doctor_id,
+                "start_time": a.start_time.isoformat(),
+                "end_time": a.end_time.isoformat(),
+                "status": a.status,
+                "problem": a.problem
+            },
+            "treatment": {
+                "id": a.treatment.id if a.treatment else None,
+                "diagnosis": a.treatment.diagnosis if a.treatment else None,
+                "prescription": a.treatment.prescription if a.treatment else None,
+                "notes": a.treatment.notes if a.treatment else None,
+            }
+        })
+    return jsonify({"history": phist}), 200

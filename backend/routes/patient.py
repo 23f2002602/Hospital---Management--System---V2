@@ -257,31 +257,33 @@ def cancel_appointment(appt_id):
     return jsonify({"msg":"appointment cancelled"}), 200
 
 # -------- patient appointments (list) --------
-@patient_bp.route("/appointments", methods=["GET"])
+
+@# patient.py
+@patient_bp.route("/appointments/history", methods=["GET"])
 @jwt_required()
 @role_required([UserRole.PATIENT])
-def list_patient_appointments():
+def patient_full_history():
     pid = _patient_id_from_token()
-    status = request.args.get("status")  # booked/completed/cancelled
-    q = Appointment.query.filter_by(patient_id=pid)
-    if status:
-        q = q.filter_by(status=status)
-    q = q.order_by(Appointment.start_time.desc())
-    appts = q.all()
-    out = []
+    appts = Appointment.query.filter_by(patient_id=pid).order_by(Appointment.start_time.desc()).all()
+    phist = []
     for a in appts:
-        out.append({
-            "id": a.id,
-            "doctor_id": a.doctor_id,
-            "doctor_name": a.doctor.user.name if a.doctor and a.doctor.user else None,
-            "start_time": a.start_time.isoformat(),
-            "end_time": a.end_time.isoformat(),
-            "status": a.status,
-            "problem": a.problem,
+        phist.append({
+            "appointment": {
+                "id": a.id,
+                "doctor_id": a.doctor_id,
+                "doctor_name": a.doctor.user.name if a.doctor and a.doctor.user else None,
+                "start_time": a.start_time.isoformat(),
+                "end_time": a.end_time.isoformat(),
+                "status": a.status,
+                "problem": a.problem
+            },
             "treatment": {
+                "id": a.treatment.id if a.treatment else None,
                 "diagnosis": a.treatment.diagnosis if a.treatment else None,
                 "prescription": a.treatment.prescription if a.treatment else None,
-                "notes": a.treatment.notes if a.treatment else None
+                "notes": a.treatment.notes if a.treatment else None,
+                "created_at": a.treatment.created_at.isoformat() if a.treatment else None
             }
         })
-    return jsonify(out), 200
+    return jsonify({"history": phist}), 200
+
