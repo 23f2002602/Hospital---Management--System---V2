@@ -4,6 +4,8 @@ from models import *
 from database import db
 from utils import role_required
 from datetime import datetime
+from sqlalchemy import and_, or_, text
+
 
 patient_bp = Blueprint("patient_bp", __name__)
 
@@ -169,27 +171,62 @@ def book_appointment():
     if end_dt <= start_dt:
         return jsonify({"msg":"end_time must be after start_time"}), 400
 
-    # check doctor exists
     doctor = Doctor.query.get(doctor_id)
     if not doctor:
         return jsonify({"msg":"doctor not found"}), 404
 
+   
     ok, msg = _is_doctor_available_on(doctor_id, start_dt, end_dt)
     if not ok:
         return jsonify({"msg": msg}), 400
 
-    appt = Appointment(
-        doctor_id = doctor_id,
-        patient_id = pid,
-        start_time = start_dt,
-        end_time = end_dt,
-        status = "booked",
-        problem = problem,
-        date = start_dt.date()
-    )
-    db.session.add(appt)
-    db.session.commit()
-    return jsonify({"msg":"appointment booked", "appointment_id": appt.id}), 201
+    # NOW perform transactional overlap check + insert to reduce race conditions
+    try:
+        with db.session.begin():  # transaction
+            # Lock overlapping appointments for this doctor (if DB supports FOR UPDATE)
+            # Build overlap filter:
+            overlap_filter = and_(
+                Appointment.doctor_id == doctor_id,
+                Appointment.status == "booked",
+                or_(
+                    and_(Appointment.start_time <= start_dt, Appointment.end_time > start_dt),
+                    and_(Appointment.start_time < end_dt, Appointment.end_time >= end_dt),
+                    and_(Appointment.start_time >= start_dt, Appointment.end_time <= end_dt)
+                )
+            )
+
+            # Try to select any overlapping rows and lock them
+            # On Postgres: .with_for_update() will generate FOR UPDATE
+            overlapping_q = Appointment.query.filter(overlap_filter)
+            try:
+                overlapping = overlapping_q.with_for_update(nowait=False).first()
+            except Exception:
+                # some DBs (SQLite) may not support FOR UPDATE — fall back to plain read
+                overlapping = overlapping_q.first()
+
+            if overlapping:
+                # someone else booked the slot
+                return jsonify({"msg":"Time slot already booked"}), 400
+
+            appt = Appointment(
+                doctor_id = doctor_id,
+                patient_id = pid,
+                start_time = start_dt,
+                end_time = end_dt,
+                status = "booked",
+                problem = problem,
+                date = start_dt.date()
+            )
+            db.session.add(appt)
+            appt_id = appt.id
+            db.session.flush()
+            appt_id = appt.id
+
+        return jsonify({"msg":"appointment booked", "appointment_id": appt.id}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"msg":"booking failed", "error": str(e)}), 500
+    
 
 # -------- reschedule appointment (patient only for their own) --------
 
@@ -220,11 +257,40 @@ def reschedule_appointment(appt_id):
     if not ok:
         return jsonify({"msg":msg}), 400
 
-    appt.start_time = start_dt
-    appt.end_time = end_dt
-    appt.date = start_dt.date()
-    db.session.commit()
-    return jsonify({"msg":"appointment rescheduled"}), 200
+    try:
+        with db.session.begin():
+            overlap_filter = and_(
+                Appointment.doctor_id == appt.doctor_id,
+                Appointment.status == "booked",
+                Appointment.id != appt.id,  # exclude current appointment
+                or_(
+                    and_(Appointment.start_time <= start_dt, Appointment.end_time > start_dt),
+                    and_(Appointment.start_time < end_dt, Appointment.end_time >= end_dt),
+                    and_(Appointment.start_time >= start_dt, Appointment.end_time <= end_dt)
+                )
+            )
+
+            overlapping_q = Appointment.query.filter(overlap_filter)
+            try:
+                overlapping = overlapping_q.with_for_update(nowait=False).first()
+            except Exception:
+                overlapping = overlapping_q.first()
+
+            if overlapping:
+                return jsonify({"msg":"Time slot already booked"}), 400
+
+            # update appointment
+            appt.start_time = start_dt
+            appt.end_time = end_dt
+            appt.date = start_dt.date()
+            db.session.add(appt)
+            db.session.flush()
+
+        return jsonify({"msg":"appointment rescheduled"}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"msg":"reschedule failed", "error": str(e)}), 500
 
 # -------- cancel appointment (patient) --------
 @patient_bp.route("/appointments/<int:appt_id>/cancel", methods=["POST"])
@@ -258,7 +324,6 @@ def cancel_appointment(appt_id):
 
 # -------- patient appointments (list) --------
 
-@# patient.py
 @patient_bp.route("/appointments/history", methods=["GET"])
 @jwt_required()
 @role_required([UserRole.PATIENT])

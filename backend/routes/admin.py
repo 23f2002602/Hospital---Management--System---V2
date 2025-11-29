@@ -4,6 +4,8 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from database import db
 from models import *
 from utils import role_required
+from tasks import export_appointments_csv
+from celery.result import AsyncResult
 
 admin_bp = Blueprint("admin_bp", __name__)
 
@@ -187,3 +189,17 @@ def admin_patient_history(patient_id):
             }
         })
     return jsonify({"history": phist}), 200
+
+@admin_bp.route("/appointments/export/<int:doctor_id>", methods=["POST"])
+@jwt_required()
+@role_required([UserRole.ADMIN])
+def enqueue_export(doctor_id):
+    task = export_appointments_csv.delay(doctor_id)
+    return jsonify({"task_id": task.id}), 202
+
+@admin_bp.route("/tasks/<task_id>", methods=["GET"])
+@jwt_required()
+@role_required([UserRole.ADMIN])
+def task_status(task_id):
+    res = AsyncResult(task_id)
+    return jsonify({"id": task_id, "status": res.status, "result": res.result}), 200
