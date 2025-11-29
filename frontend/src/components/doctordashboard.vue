@@ -1,138 +1,144 @@
 <template>
-  <div class="container mt-3">
-    <h3>Doctor Dashboard</h3>
-
-    <!-- TAB NAV -->
-    <div class="d-flex gap-2 mb-3">
-      <button
-        :class="['btn', activeTab === 'appointments' ? 'btn-primary' : 'btn-outline-secondary']"
-        @click="activeTab = 'appointments'">
-        Appointments
-      </button>
-
-      <button
-        :class="['btn', activeTab === 'patients' ? 'btn-primary' : 'btn-outline-secondary']"
-        @click="activeTab = 'patients'">
-        Patients
-      </button>
-
-      <button
-        :class="['btn', activeTab === 'availability' ? 'btn-primary' : 'btn-outline-secondary']"
-        @click="activeTab = 'availability'">
-        Availability
-      </button>
-      <button class="btn btn-sm btn-outline-secondary ms-auto" @click="loadAll">Refresh All</button>
+  <div class="doctor-dashboard">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h3 class="m-0">Doctor Dashboard</h3>
+      <div class="d-flex gap-2">
+        <button class="btn btn-outline-secondary" @click="refreshAll" :disabled="loading">
+          <span v-if="loading" class="spinner-border spinner-border-sm"></span>
+          Refresh
+        </button>
+        <button class="btn btn-outline-primary" @click="exportCsv" :disabled="exporting">
+          <span v-if="exporting" class="spinner-border spinner-border-sm"></span>
+          Export CSV
+        </button>
+      </div>
     </div>
 
-    <!-- APPOINTMENTS TAB -->
-    <div v-if="activeTab === 'appointments'">
-      <div class="row">
-        <div class="col-md-12">
-          <div class="card p-3 mb-3">
-            <div class="d-flex justify-content-between align-items-center">
-              <h5 class="mb-0">Upcoming Appointments</h5>
-              <div>
-                <button class="btn btn-sm btn-outline-primary" @click="loadAppointments">Refresh</button>
-                <button class="btn btn-sm btn-outline-secondary" @click="exportCSV">Export CSV</button>
-              </div>
+    <ul class="nav nav-tabs mb-3" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" :class="{active: tab==='appointments'}" @click="tab='appointments'">Appointments</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" :class="{active: tab==='patients'}" @click="tab='patients'">Patients</button>
+      </li>
+      <li class="nav-item ms-auto" role="presentation">
+        <small class="text-muted align-self-center">X-Cache: <strong>{{ cacheHeader || '—' }}</strong></small>
+      </li>
+    </ul>
+
+    <div v-if="tab === 'appointments'">
+      <div class="row gx-3 gy-3">
+        <div class="col-12 col-lg-8">
+          <div class="card p-3">
+            <h5>Upcoming Appointments</h5>
+            <div v-if="appointments.length === 0" class="py-4 text-center text-muted">
+              No upcoming appointments
             </div>
 
-            <ul class="list-group mt-3">
-              <li v-for="a in appts" :key="a.id" class="list-group-item d-flex justify-content-between align-items-center">
+            <div v-else class="table-responsive">
+              <table class="table table-hover align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>Patient</th>
+                    <th>Date</th>
+                    <th>Time</th>
+                    <th>Problem</th>
+                    <th>Status</th>
+                    <th class="text-end">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="a in appointments" :key="a.id">
+                    <td>{{ a.patient_name || '—' }}</td>
+                    <td>{{ formatDate(a.start_time) }}</td>
+                    <td>{{ formatTimeRange(a.start_time, a.end_time) }}</td>
+                    <td class="text-truncate" style="max-width:200px">{{ a.problem || '—' }}</td>
+                    <td>
+                      <span :class="statusBadge(a.status)">{{ a.status }}</span>
+                    </td>
+                    <td class="text-end">
+                      <button class="btn btn-sm btn-outline-secondary me-1" @click="viewAppointment(a)">
+                        View
+                      </button>
+                      <button v-if="a.status==='booked'" class="btn btn-sm btn-success me-1" @click="completeAppointment(a)" :disabled="a.processing">
+                        ✓ Complete
+                      </button>
+                      <button v-if="a.status==='booked'" class="btn btn-sm btn-danger" @click="cancelAppointment(a)" :disabled="a.processing">
+                        ✕ Cancel
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="col-12 col-lg-4">
+          <div class="card p-3 mb-3">
+            <h6>Availability (next 7 days)</h6>
+            <div v-if="availability.length === 0" class="text-muted">No availability set.</div>
+            <ul class="list-group list-group-flush">
+              <li v-for="d in availability" :key="d.date" class="list-group-item d-flex justify-content-between align-items-center">
                 <div>
-                  <div><strong>{{ formatShort(a.start_time) }}</strong> — {{ a.patient_name || a.patient_id }}</div>
-                  <div class="text-muted">{{ a.problem }}</div>
+                  <div class="fw-semibold">{{ d.day }}</div>
+                  <small class="text-muted">{{ d.date }}</small>
                 </div>
-                <div class="d-flex gap-2">
-                  <button class="btn btn-sm btn-success" @click="openCompleteModal(a)">Complete</button>
-                  <button class="btn btn-sm btn-outline-secondary" @click="openTreat(a)">Add Treatment</button>
-                  <button class="btn btn-sm btn-danger" @click="cancelAppt(a)">Cancel</button>
+                <div class="text-end">
+                  <div v-if="d.is_available">
+                    <small>{{ d.start_time || '—' }} — {{ d.end_time || '—' }}</small>
+                  </div>
+                  <div v-else>
+                    <small class="text-danger">Off</small>
+                  </div>
                 </div>
               </li>
-              <li v-if="!appts.length" class="list-group-item text-muted">No upcoming appointments.</li>
             </ul>
+          </div>
+
+          <div class="card p-3">
+            <h6>Quick Actions</h6>
+            <button class="btn btn-outline-secondary w-100 mb-2" @click="refreshAvailability">Refresh Availability</button>
+            <button class="btn btn-outline-info w-100" @click="openPatientsTab">Open Patients</button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- PATIENTS TAB -->
-    <div v-if="activeTab === 'patients'">
+    <div v-if="tab === 'patients'">
       <doctor-patients />
     </div>
 
-    <!-- AVAILABILITY TAB -->
-    <div v-if="activeTab === 'availability'">
-      <div class="row">
-        <div class="col-md-7">
-          <div class="card p-3 mb-3">
-            <h5>Weekly Availability</h5>
-            <div v-for="d in weekdays" :key="d" class="mb-2">
-              <div class="d-flex gap-2 align-items-center">
-                <strong style="width:100px">{{ d }}</strong>
-                <input v-model="avail[d].start_time" placeholder="HH:MM" class="form-control form-control-sm" style="width:90px"/>
-                <input v-model="avail[d].end_time" placeholder="HH:MM" class="form-control form-control-sm" style="width:90px"/>
-                <input type="checkbox" v-model="avail[d].is_available"/> Available
-                <button class="btn btn-sm btn-primary" @click="saveDay(d)">Save</button>
+    <!-- Appointment detail modal -->
+    <div class="modal fade" tabindex="-1" ref="apptModal">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Appointment Details</h5>
+            <button type="button" class="btn-close" @click="closeModal"></button>
+          </div>
+          <div class="modal-body">
+            <div v-if="currentAppt">
+              <p><strong>Patient:</strong> {{ currentAppt.patient_name }}</p>
+              <p><strong>Date/Time:</strong> {{ formatDate(currentAppt.start_time) }} — {{ formatTimeRange(currentAppt.start_time, currentAppt.end_time) }}</p>
+              <p><strong>Problem:</strong> {{ currentAppt.problem || '—' }}</p>
+              <hr />
+              <div v-if="currentAppt.treatment">
+                <h6>Treatment</h6>
+                <p><strong>Diagnosis:</strong> {{ currentAppt.treatment.diagnosis }}</p>
+                <p><strong>Prescription:</strong> {{ currentAppt.treatment.prescription }}</p>
+                <p><strong>Notes:</strong> {{ currentAppt.treatment.notes }}</p>
+              </div>
+              <div v-else>
+                <p class="text-muted">No treatment recorded yet.</p>
               </div>
             </div>
+            <div v-else class="text-center text-muted">No appointment selected</div>
           </div>
-        </div>
-
-        <div class="col-md-5">
-          <div class="card p-3">
-            <h5>Overrides (vacation / special days)</h5>
-            <input type="date" v-model="ov.date" class="form-control mb-2"/>
-            <div>
-              <label><input type="checkbox" v-model="ov.is_available"/> Available</label>
-              <button class="btn btn-sm btn-primary ms-2" @click="saveOverride">Save</button>
-            </div>
-            <hr/>
-            <ul>
-              <li v-for="o in overrides" :key="o.id">{{ o.date }} — {{ o.is_available ? 'Available' : 'Not available' }}</li>
-              <li v-if="!overrides.length" class="text-muted">No overrides yet.</li>
-            </ul>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" @click="closeModal">Close</button>
           </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- treatment modal simple -->
-    <div v-if="treating" class="modal-backdrop">
-      <div class="card p-3" style="max-width:600px;margin:40px auto;">
-        <h5>Add Treatment</h5>
-        <div class="mb-2">
-          <textarea v-model="treatment.diagnosis" class="form-control" placeholder="Diagnosis"></textarea>
-        </div>
-        <div class="mb-2">
-          <textarea v-model="treatment.prescription" class="form-control" placeholder="Prescription"></textarea>
-        </div>
-        <div class="mb-2">
-          <textarea v-model="treatment.notes" class="form-control" placeholder="Notes"></textarea>
-        </div>
-        <div class="d-flex gap-2">
-          <button class="btn btn-success" @click="submitTreatment">Save</button>
-          <button class="btn btn-secondary" @click="closeTreat">Cancel</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- complete modal -->
-    <div v-if="completing" class="modal-backdrop">
-      <div class="card p-3" style="max-width:600px;margin:40px auto;">
-        <h5>Complete Appointment</h5>
-        <div class="mb-2">
-          <textarea v-model="completePayload.diagnosis" class="form-control" placeholder="Diagnosis"></textarea>
-        </div>
-        <div class="mb-2">
-          <textarea v-model="completePayload.prescription" class="form-control" placeholder="Prescription"></textarea>
-        </div>
-        <div class="mb-2">
-          <textarea v-model="completePayload.notes" class="form-control" placeholder="Notes"></textarea>
-        </div>
-        <div class="d-flex gap-2">
-          <button class="btn btn-success" @click="completeAppointment">Complete</button>
-          <button class="btn btn-secondary" @click="completing=false">Cancel</button>
         </div>
       </div>
     </div>
@@ -141,117 +147,153 @@
 </template>
 
 <script>
-import api from "../api/api";
 import DoctorPatients from "./DoctorPatients.vue";
+import api from "../api/api.js"; // adjust path if your api is elsewhere
+import { Modal } from "bootstrap";
 
 export default {
+  name: "DoctorDashboard",
   components: { DoctorPatients },
-  data(){
+  data() {
     return {
-      activeTab: "appointments",
-      appts: [],
-      weekdays: ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"],
-      avail: {},
-      overrides: [],
-      ov: { date: "", is_available: false },
-      treating: false,
-      treatment: {},
-      treating_appt: null,
-      completing: false,
-      completePayload: { diagnosis:"", prescription:"", notes:"" }
+      tab: "appointments",
+      appointments: [],
+      availability: [],
+      loading: false,
+      exporting: false,
+      cacheHeader: null,
+      currentAppt: null,
+      apptModalInstance: null
     };
   },
-  mounted(){
-    this.initAvailObj();
+  mounted() {
     this.loadAll();
+    // init bootstrap modal instance
+    this.apptModalInstance = new Modal(this.$refs.apptModal, {});
   },
-  methods:{
-    initAvailObj(){
-      this.weekdays.forEach(d => { this.$set(this.avail, d, { start_time:"", end_time:"", is_available:false }); });
-    },
-    async loadAll(){
+  methods: {
+    async loadAll() {
+      this.loading = true;
       await Promise.all([this.loadAppointments(), this.loadAvailability()]);
+      this.loading = false;
     },
-    async loadAppointments(){
-      try{
-        const res = await api.get("/doctor/appointments?upcoming=true");
-        this.appts = res.data;
-      }catch(e){
+    async loadAppointments() {
+      try {
+        const res = await api.get("/admin/doctors"); // sanity check or other endpoint
+        // But we need doctor's own appts -> endpoint: /api/doctor/appointments
+        const resp = await api.get("/doctor/appointments?upcoming=true");
+        if (resp.headers) this.cacheHeader = resp.headers["x-cache"];
+        this.appointments = resp.data || [];
+      } catch (e) {
         console.error(e);
+        this.appointments = [];
       }
     },
-    formatShort(iso){
-      return new Date(iso).toLocaleString();
+    async loadAvailability() {
+      try {
+        const resp = await api.get("/doctor/availability/next");
+        if (resp.headers) this.cacheHeader = resp.headers["x-cache"] || this.cacheHeader;
+        this.availability = resp.data || [];
+      } catch (e) {
+        console.error(e);
+        this.availability = [];
+      }
     },
-    openTreat(a){
-      this.treating = true;
-      this.treatment = { diagnosis:"", prescription:"", notes:"" };
-      this.trating_appt = a;
-      this.treating_appt = a;
+    formatDate(iso) {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      return d.toLocaleDateString();
     },
-    closeTreat(){ this.treating = false; this.treating_appt = null; },
-    async submitTreatment(){
-      if(!this.treating_appt) return;
-      await api.post(`/doctor/appointments/${this.treating_appt.id}/complete`, this.treatment);
-      this.closeTreat();
-      this.loadAppointments();
+    formatTimeRange(start, end) {
+      if (!start) return "—";
+      const s = new Date(start).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+      const e = end ? new Date(end).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}) : "—";
+      return `${s} — ${e}`;
     },
-    openCompleteModal(a){
-      this.completing = true;
-      this.completePayload = { diagnosis:"", prescription:"", notes:"" };
-      this.completing_appt = a;
-      this.completing_id = a.id;
+    statusBadge(status) {
+      if (!status) return "badge bg-secondary";
+      if (status === "booked") return "badge bg-info text-dark";
+      if (status === "completed") return "badge bg-success";
+      if (status === "cancelled") return "badge bg-danger";
+      return "badge bg-secondary";
     },
-    async completeAppointment(){
-      if(!this.completing_id) return;
-      await api.post(`/doctor/appointments/${this.completing_id}/complete`, this.completePayload);
-      this.completing = false;
-      this.completing_id = null;
-      this.loadAppointments();
+    viewAppointment(appt) {
+      this.currentAppt = appt;
+      // open modal
+      this.apptModalInstance.show();
     },
-    async cancelAppt(a){
-      if(!confirm("Cancel appointment?")) return;
-      await api.post(`/doctor/appointments/${a.id}/cancel`);
-      this.loadAppointments();
+    closeModal() {
+      this.apptModalInstance.hide();
+      this.currentAppt = null;
     },
-    async loadAvailability(){
-      const res = await api.get("/doctor/availability");
-      const weekly = res.data.weekly || [];
-      this.overrides = res.data.overrides || [];
-      // reset
-      this.initAvailObj();
-      weekly.forEach(w => {
-        this.$set(this.avail, w.day_of_week, { start_time: w.start_time ? w.start_time.slice(0,5) : "", end_time: w.end_time ? w.end_time.slice(0,5) : "", is_available: w.is_available });
-      });
+    async completeAppointment(appt) {
+      if (!confirm("Mark appointment as completed? This will allow entering treatment on backend.")) return;
+      appt.processing = true;
+      try {
+        const resp = await api.post(`/doctor/appointments/${appt.id}/treatment`, {
+          diagnosis: "", // you can send minimal; ideally doctor UI should present a form
+          prescription: "see notes",
+          notes: "Recorded via app"
+        });
+        alert(resp.data?.msg || "Completed");
+        await this.loadAppointments();
+        // bump availability will be server-side; refresh availability too
+        await this.loadAvailability();
+      } catch (e) {
+        console.error(e);
+        alert(e.response?.data?.msg || "Failed");
+      } finally {
+        appt.processing = false;
+      }
     },
-    async saveDay(day){
-      const payload = { day_of_week: day, start_time: this.avail[day].start_time, end_time: this.avail[day].end_time, is_available: this.avail[day].is_available };
-      await api.post("/doctor/availability", payload);
-      alert("Saved");
+    async cancelAppointment(appt) {
+      if (!confirm("Cancel this appointment?")) return;
+      appt.processing = true;
+      try {
+        const resp = await api.post(`/doctor/appointments/${appt.id}/cancel`);
+        alert(resp.data?.msg || "Cancelled");
+        await this.loadAppointments();
+        await this.loadAvailability();
+      } catch (e) {
+        console.error(e);
+        alert(e.response?.data?.msg || "Failed");
+      } finally {
+        appt.processing = false;
+      }
+    },
+    async exportCsv() {
+      this.exporting = true;
+      try {
+        // downloads file directly from backend
+        const resp = await api.get("/doctor/appointments/export", { responseType: "blob" });
+        const blob = new Blob([resp.data], { type: "text/csv" });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `appointments_doctor.csv`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+      } catch (e) {
+        console.error(e);
+        alert("Export failed");
+      } finally {
+        this.exporting = false;
+      }
+    },
+    refreshAll() {
+      this.loadAll();
+    },
+    refreshAvailability() {
       this.loadAvailability();
     },
-    async saveOverride(){
-      if(!this.ov.date){ alert("pick a date"); return; }
-      await api.post("/doctor/override", { date: this.ov.date, is_available: this.ov.is_available });
-      this.ov = { date:"", is_available:false };
-      this.loadAvailability();
-    },
-    async exportCSV(){
-      const resp = await api.get("/doctor/appointments/export", { responseType: "blob" });
-      const url = window.URL.createObjectURL(new Blob([resp.data]));
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "appointments.csv";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(url);
+    openPatientsTab() {
+      this.tab = "patients";
     }
   }
 };
 </script>
 
-<style>
-.modal-backdrop { position: fixed; inset:0; background: rgba(0,0,0,0.4); display:flex; align-items:flex-start; padding-top:6vh; z-index:9999; }
-.card { background: var(--surface); }
+<style scoped>
+.doctor-dashboard .card { border-radius: 12px; }
+.table td, .table th { vertical-align: middle; }
 </style>

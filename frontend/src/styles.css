@@ -1,91 +1,57 @@
-:root {
-  /* Light theme tokens */
-  --bg: #ffffff;
-  --surface: #f8f9fa;
-  --text: #212529;
-  --muted: #6c757d;
-  --primary: #0d6efd;
-  --card-shadow: 0 1px 3px rgba(33,37,41,0.06);
-  --border: #e9ecef;
-}
+/* styles.css - global styles and dark theme overrides */
 
-/* Dark theme overrides */
-.theme-dark {
-  --bg: #0b1220;
-  --surface: #0f1724;
-  --text: #e6eef8;
-  --muted: #9aa7bd;
-  --primary: #4da3ff;
-  --card-shadow: 0 1px 6px rgba(0,0,0,0.6);
-  --border: rgba(255,255,255,0.06);
-}
-
-/* Ensure a default light class also sets variables explicitly (optional) */
-.theme-light {
-  /* nothing to override — :root already light tokenized */
-}
-
-/* Apply tokens globally */
-html, body, #app {
-  background: var(--bg);
-  color: var(--text);
-  height: 100%;
+/* basic spacing / mobile first */
+body {
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Card styling using tokens */
-.card {
-  background: var(--surface);
+/* containers and cards padding */
+.card { border-radius: 12px; }
+
+/* small screen fix for forms */
+.form-control { min-height: 42px; }
+
+/* Dark theme using [data-theme="dark"] on html */
+:root {
+  --bg: #ffffff;
+  --text: #222;
+  --muted: #6c757d;
+  --card: #fff;
+  --primary: #0d6efd;
+}
+
+html[data-theme="dark"] {
+  --bg: #0b1020;
+  --text: #e7eefc;
+  --muted: #9aa6bf;
+  --card: #0f1724;
+  --primary: #4ea8ff;
+  background-color: var(--bg);
   color: var(--text);
-  box-shadow: var(--card-shadow);
-  border: 1px solid var(--border);
 }
 
-/* Buttons use Bootstrap but adjust primary color */
-.btn-primary {
-  background-color: var(--primary);
-  border-color: var(--primary);
+body {
+  background-color: var(--bg);
+  color: var(--text);
 }
 
-/* Muted text */
-.text-muted {
-  color: var(--muted) !important;
+/* footer and nav */
+.footer { background-color: transparent; border-top: 1px solid rgba(0,0,0,0.04); }
+
+/* table responsiveness tweaks */
+.table thead th { white-space: nowrap; }
+
+/* small responsive helpers */
+@media (max-width: 576px) {
+  .navbar-brand { font-size: 1.05rem; }
 }
 
-/* Responsive table -> cards on small screens */
-.responsive-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-@media (max-width: 768px) {
-  /* Hide table headers, show each row as card */
-  .responsive-table thead { display: none; }
-  .responsive-table tbody tr {
-    display: block;
-    margin-bottom: 0.75rem;
-    border-radius: 0.5rem;
-    overflow: hidden;
-  }
-  .responsive-table tbody tr td {
-    display: flex;
-    justify-content: space-between;
-    padding: 0.6rem;
-    border-bottom: 1px solid var(--border);
-  }
-}
-
-/* Small utility spacing tweaks */
-.container { padding-top: 1rem; padding-bottom: 2rem; }
-
-/* Theme toggle button */
-.theme-toggle {
-  display:inline-flex;
-  align-items:center;
-  gap:.5rem;
-  cursor:pointer;
-  border-radius: 999px;
-  padding: .25rem .5rem;
-  background: transparent;
-  border: 1px solid var(--border);
+/* utility: center content with limited width */
+.container-centered {
+  max-width: 980px;
+  margin-left: auto;
+  margin-right: auto;
 }

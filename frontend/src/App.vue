@@ -1,63 +1,104 @@
 <template>
-  <div>
-    <nav class="navbar navbar-expand-lg" :class="['py-2', 'px-3']" style="border-bottom:1px solid var(--border);">
+  <div :class="['app-root', theme]">
+    <nav class="navbar navbar-expand-lg sticky-top" :class="navClass">
       <div class="container-fluid">
-        <a class="navbar-brand" href="#" style="color:var(--text); font-weight:600">Hospital Management System</a>
-      
+        <a class="navbar-brand" href="/">HMS V2</a>
 
-        <button class="navbar-toggle" type="button" data-bs-toggle="collapse" data-bs-target="#navMenu">
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
+                data-bs-target="#navMenu" aria-controls="navMenu" aria-expanded="false"
+                aria-label="Toggle navigation">
           <span class="navbar-toggler-icon"></span>
         </button>
 
         <div class="collapse navbar-collapse" id="navMenu">
           <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-            <!-- Add navigation items here -->
+            <li class="nav-item"><router-link class="nav-link" to="/">Home</router-link></li>
+            <li class="nav-item"><router-link class="nav-link" to="/search">Doctors</router-link></li>
+            <li v-if="!loggedIn" class="nav-item"><router-link class="nav-link" to="/login">Login</router-link></li>
           </ul>
 
           <div class="d-flex align-items-center gap-2">
-            <div class="theme-toggle" @click="toggle-Theme" :title="theme === 'dark' ? 'Switch to light':'Switch to dark'" >
-              <svg v-if="theme === 'dark'" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-sun" viewBox="0 0 16 16">
-                <path d="M8 4.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z"/>
-                <path d="M8 0a.5.5 0 0 1 .5.5V2a.5.5 0 0 1-1 0V.5A.5.5 0 0 1 8 0zM8 14a.5.5 0 0 1 .5.5v1.5a.5.5 0 0 1-1 0V14.5A.5.5 0 0 1 8 14zM14 8a.5.5 0 0 1 .5.5H16a.5.5 0 0 1 0 1h-1.5A.5.5 0 0 1 14 8zM0 8a.5.5 0 0 1 .5.5H2a.5.5 0 0 1 0-1H.5A.5.5 0 0 1 0 8zM12.657 3.343a.5.5 0 0 1 .707 0l1.061 1.06a.5.5 0 0 1-.707.707L12.657 4.05a.5.5 0 0 1 0-.707zM2.636 13.364a.5.5 0 0 1 .707 0l1.06-1.06a.5.5 0 1 1-.707-.707l-1.06 1.06a.5.5 0 0 1 0 .707zM13.364 13.364a.5.5 0 0 1 0-.707l1.06-1.06a.5.5 0 1 1 .707.707l-1.06 1.06a.5.5 0 0 1-.707 0zM3.343 3.343a.5.5 0 0 1 .707.707L3-1.06A.5.5 0 1 1 1.586 2.636l1.757.707z"/>
-              </svg>
-              <svg v-else xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-moon" viewBox="0 0 16 16">
-                  <path d="M6 0a6 6 0 0 0 0 12 6 6 0 1 1 0-12z"/>
-              </svg>
-              <small class="text-muted" :style="{color:'var(--muted)'}">{{ theme === 'dark' ? 'Dark' : 'Light' }}</small>
-            </div>
+            <install-pwa />
+            <button class="btn btn-outline-secondary" @click="toggleTheme" :title="themeTitle">
+              <span v-if="isDark">🌙</span><span v-else>☀️</span>
+            </button>
 
-            <button class="btn btn-outline-secondary btn-sm" @click="logout">Logout</button>
+            <div v-if="loggedIn" class="dropdown">
+              <button class="btn btn-primary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                {{ userNameShort }}
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                <li><router-link class="dropdown-item" to="/profile">Profile</router-link></li>
+                <li><a class="dropdown-item" @click="logout">Logout</a></li>
+              </ul>
+            </div>
           </div>
         </div>
       </div>
     </nav>
 
-    <main class="container">
-      <router-view></router-view>
+    <main class="container py-4">
+      <router-view />
     </main>
+
+    <footer class="footer mt-auto py-3 bg-light text-muted">
+      <div class="container text-center small">© HMS V2</div>
+    </footer>
   </div>
 </template>
 
 <script>
-import {getTheme, setTheme} from "./main";
+import InstallPWA from "./pwa/InstallPWA.vue";
 
-export default{
-  data() {return { theme: getTheme() }; },
+export default {
+  name: "App",
+  components: { InstallPWA },
+  data() {
+    return {
+      theme: localStorage.getItem("theme") || "light",
+    };
+  },
+  computed: {
+    isDark() { return this.theme === "dark"; },
+    themeTitle() { return this.isDark ? "Switch to light" : "Switch to dark"; },
+    loggedIn() { return !!localStorage.getItem("token"); },
+    userNameShort() {
+      const name = localStorage.getItem("user_name") || "";
+      return name ? name.split(" ")[0] : "User";
+    },
+    navClass() { return this.isDark ? "navbar-dark bg-dark" : "navbar-light bg-white"; }
+  },
   methods: {
     toggleTheme() {
-      this.theme = this.theme === 'dark' ? 'light' : 'dark';
-      setTheme(this.theme);
+      this.theme = this.isDark ? "light" : "dark";
+      localStorage.setItem("theme", this.theme);
     },
-    logout(){
+    logout() {
       localStorage.removeItem("token");
+      localStorage.removeItem("user_name");
       this.$router.push("/login");
+      // reload to clear any cached ui state
+      window.location.reload();
+    }
+  },
+  mounted() {
+    // Apply theme class to body for global styling
+    document.documentElement.setAttribute("data-theme", this.theme);
+  },
+  watch: {
+    theme(newVal) {
+      document.documentElement.setAttribute("data-theme", newVal);
     }
   }
 };
 </script>
 
-<style>
-/* small safety: navbar uses tokens */
-.navbar { background: var(--surface); color: var(--text); }
-.navbar .navbar-brand { color: var(--text) !important; }
+<style scoped>
+.app-root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+main.container { flex: 1 0 auto; }
+.footer { margin-top: auto; }
 </style>
