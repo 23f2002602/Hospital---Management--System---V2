@@ -2,7 +2,12 @@ import { createApp } from "vue";
 import App from "./App.vue";
 import router from "./router";
 import api, { setAuthToken, decodeJwt } from "./api/api";
-import "./styles.css"; // theme + global styles
+
+// BOOTSTRAP
+import "bootstrap/dist/css/bootstrap.min.css";
+import "bootstrap/dist/js/bootstrap.bundle.min.js";
+
+import "./styles.css";
 
 export function getTheme() {
   try {
@@ -27,8 +32,7 @@ setTheme(initial);
 const token = localStorage.getItem("token");
 if (token) {
   setAuthToken(token);
-
- try {
+  try {
     const payload = decodeJwt(token);
     const role = payload?.role;
     if (role) localStorage.setItem("role", role);

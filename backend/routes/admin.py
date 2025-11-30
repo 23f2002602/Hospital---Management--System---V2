@@ -8,8 +8,13 @@ from utils import role_required
 from tasks import export_appointments_csv
 from celery.result import AsyncResult
 from redis_utils import bump_namespace
+# Added imports for availability logic
+from datetime import datetime, date, timedelta, time as dt_time
 
 admin_bp = Blueprint("admin_bp", __name__)
+
+# ... [KEEP EXISTING ROUTES: create_doctor, list_doctors, get_doc, update_doc, delete_doc, etc.] ...
+# ... [Paste the existing routes here or keep them as is] ...
 
 @admin_bp.route("/create_doctor", methods=["POST"])
 @jwt_required()
@@ -60,7 +65,6 @@ def list_doctors():
             "name": doc.user.name if doc.user else None,
             "email": doc.user.email if doc.user else None,
             "specialization": doc.specialization,
-            # FIXED: Changed key from 'department' to 'department_id'
             "department_id": doc.department_id 
         })
     return jsonify(result), 200
@@ -75,7 +79,6 @@ def get_doc(doctor_id):
         "name": d.user.name if d.user else None,
         "email": d.user.email if d.user else None,
         "specialization": d.specialization,
-        # FIXED: Changed key from 'department' to 'department_id'
         "department_id": d.department_id
     }), 200
 
@@ -111,6 +114,11 @@ def update_doc(doctor_id):
 @role_required([UserRole.ADMIN])
 def delete_doc(doctor_id):
     d = Doctor.query.get_or_404(doctor_id)
+    
+    # Check for existing appointments to prevent IntegrityError
+    if Appointment.query.filter_by(doctor_id=doctor_id).first():
+        return jsonify({"msg": "Cannot delete doctor with existing appointments."}), 400
+
     user = User.query.get(doctor_id)
     try:
         db.session.delete(d)
@@ -215,3 +223,92 @@ def enqueue_export(doctor_id):
 def task_status(task_id):
     res = AsyncResult(task_id)
     return jsonify({"id": task_id, "status": res.status, "result": res.result}), 200
+
+# --- NEW: Availability Routes for Admin ---
+
+@admin_bp.route("/doctors/<int:doctor_id>/availability/next", methods=["GET"])
+@jwt_required()
+@role_required([UserRole.ADMIN])
+def get_doctor_availability_next(doctor_id):
+    weekly = {a.day_of_week: a for a in DoctorAvailability.query.filter_by(doctor_id=doctor_id).all()}
+    overrides = {ov.date: ov for ov in DoctorAvailabilityOverride.query.filter_by(doctor_id=doctor_id).all()}
+
+    result = []
+    today = date.today()
+    for i in range(7):
+        d = today + timedelta(days=i)
+        weekday = d.strftime("%A")
+        ov = overrides.get(d)
+        if ov is not None:
+            is_avail = ov.is_available
+            start = None
+            end = None
+        else:
+            wa = weekly.get(weekday)
+            if wa and wa.is_available:
+                is_avail = True
+                start = wa.start_time.strftime("%H:%M") if wa.start_time else None
+                end = wa.end_time.strftime("%H:%M") if wa.end_time else None
+            else:
+                is_avail = False
+                start = None
+                end = None
+        result.append({
+            "date": d.isoformat(),
+            "day": weekday,
+            "is_available": is_avail,
+            "start_time": start,
+            "end_time": end
+        })
+    return jsonify(result), 200
+
+@admin_bp.route("/doctors/<int:doctor_id>/availability/week", methods=["POST"])
+@jwt_required()
+@role_required([UserRole.ADMIN])
+def set_doctor_weekly_availability(doctor_id):
+    data = request.get_json() or {}
+    entries = data.get("entries") or []
+    if not isinstance(entries, list):
+        return jsonify({"msg":"entries list required"}), 400
+
+    for ent in entries:
+        day = ent.get("day_of_week")
+        if not day:
+            continue
+        start = ent.get("start_time")
+        end = ent.get("end_time")
+        is_avail = bool(ent.get("is_available", True))
+
+        st = None
+        en = None
+        try:
+            if start:
+                pts = list(map(int, start.split(":")))
+                st = dt_time(hour=pts[0], minute=pts[1])
+            if end:
+                pts = list(map(int, end.split(":")))
+                en = dt_time(hour=pts[0], minute=pts[1])
+        except Exception:
+            continue
+        
+        # Check start < end
+        if st and en and st >= en:
+             return jsonify({"msg": "Start time must be before end time"}), 400
+
+        entry = DoctorAvailability.query.filter_by(doctor_id=doctor_id, day_of_week=day).first()
+        if entry:
+            entry.start_time = st
+            entry.end_time = en
+            entry.is_available = is_avail
+        else:
+            entry = DoctorAvailability(doctor_id=doctor_id, day_of_week=day, start_time=st, end_time=en, is_available=is_avail)
+            db.session.add(entry)
+
+    db.session.commit()
+
+    try:
+        bump_namespace(f"ns:doctor:{doctor_id}:availability_version")
+    except Exception:
+        current_app.logger.exception("Failed to bump availability namespace")
+
+    return jsonify({"msg":"Weekly availability updated"}), 200

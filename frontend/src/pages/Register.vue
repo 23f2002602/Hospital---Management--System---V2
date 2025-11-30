@@ -70,14 +70,20 @@ export default {
           dob: this.dob || null,
           gender: this.gender || null
         };
-        const res = await api.post("/auth/register", payload);
-        // auto-login after registration
+        await api.post("/auth/register", payload);
+        
+        // Auto-login
         const loginRes = await api.post("/auth/login", { email: this.email, password: this.password });
         const token = loginRes.data.access_token;
         setAuthToken(token);
+        
+        // --- FIX: Save actual Name ---
+        localStorage.setItem("user_name", loginRes.data.name);
+        
         const payloadDec = decodeJwt(token);
         const role = payloadDec?.role || loginRes.data.role || "patient";
         localStorage.setItem("role", role);
+        
         this.$router.push("/patient");
       } catch (e) {
         this.err = e.response?.data?.msg || e.message || "Registration failed";
