@@ -3,12 +3,14 @@ from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from database import db
 from models import *
-from backend.utils.utils import role_required
+# FIX: Import directly from utils
+from utils.utils import role_required
 from datetime import datetime
 from sqlalchemy import and_, or_
 from extensions import cache
-from backend.utils.cache_utils import cache_response
-from backend.utils.redis_utils import bump_namespace, get_namespace_version
+# FIX: Import directly from utils
+from utils.cache_utils import cache_response
+from utils.redis_utils import bump_namespace, get_namespace_version
 
 patient_bp = Blueprint("patient_bp", __name__)
 
@@ -23,7 +25,6 @@ def _doctor_search_key(q, page, per_page):
     qnorm = (q or "").strip().lower()
     return f"doctors:search:v={v}:q={qnorm}:page={page}:per={per_page}"
 
-# ----------------- PROFILE ------------------------ #
 @patient_bp.route("/profile", methods=["GET"])
 @jwt_required()
 @role_required([UserRole.PATIENT])
@@ -75,7 +76,6 @@ def update_profile():
     db.session.commit()
     return jsonify({"msg":"profile updated"}), 200
 
-# ----------------- DOCTORS ------------------------ #
 @patient_bp.route("/doctors", methods=["GET"])
 @jwt_required(optional=True)
 @cache_response(cache,
@@ -116,7 +116,6 @@ def search_doctors():
         })
     return {"total": total, "page": page, "per_page": per_page, "doctors": out}, 200
 
-# ------------------ APPOINTMENTS LIST ---------------- #
 @patient_bp.route("/appointments", methods=["GET"])
 @jwt_required()
 @role_required([UserRole.PATIENT])
@@ -148,17 +147,14 @@ def list_my_appointments():
         })
     return jsonify(result), 200
 
-# ------------------ BOOKING & OVERLAP CHECK ---------------------- #
 def _is_doctor_available_on(doctor_id:int, start_dt:datetime, end_dt:datetime):
     d = start_dt.date()
     
-    # 1. Check Overrides
     ov = DoctorAvailabilityOverride.query.filter_by(doctor_id=doctor_id, date=d).first()
     if ov:
         if not ov.is_available:
             return False, "Doctor not available (override)"
 
-    # 2. Check Weekly Schedule
     weekday = start_dt.strftime("%A")
     wa = DoctorAvailability.query.filter_by(doctor_id=doctor_id, day_of_week=weekday).first()
     if not wa or not wa.is_available:
@@ -170,7 +166,6 @@ def _is_doctor_available_on(doctor_id:int, start_dt:datetime, end_dt:datetime):
         if not (st <= start_dt.time() and end_dt.time() <= en):
             return False, "Requested time outside doctor's working hours"
 
-    # 3. Doctor-Side Overlap Check
     overlapping = Appointment.query.filter(
         Appointment.doctor_id == doctor_id,
         Appointment.status != "cancelled",
@@ -205,7 +200,6 @@ def book_appointment():
     if end_dt <= start_dt:
         return jsonify({"msg":"end_time must be after start_time"}), 400
     
-    # ADDED: Prevent booking in the past
     if start_dt < datetime.now():
         return jsonify({"msg": "Cannot book appointments in the past"}), 400
 
@@ -213,12 +207,10 @@ def book_appointment():
     if not doctor:
         return jsonify({"msg":"doctor not found"}), 404
 
-    # Check 1: Doctor Availability
     ok, msg = _is_doctor_available_on(doctor_id, start_dt, end_dt)
     if not ok:
         return jsonify({"msg": msg}), 400
 
-    # Check 2: Patient Self-Overlap (ADDED)
     patient_conflict = Appointment.query.filter(
         Appointment.patient_id == pid,
         Appointment.status != "cancelled",
@@ -230,7 +222,6 @@ def book_appointment():
         return jsonify({"msg": "You already have an appointment booked during this time."}), 400
 
     try:
-        # Check 3: Doctor Concurrency (DB transaction safe)
         overlap_filter = and_(
             Appointment.doctor_id == doctor_id,
             Appointment.status != "cancelled",
@@ -292,16 +283,14 @@ def reschedule_appointment(appt_id):
     if appt.status != "booked":
         return jsonify({"msg":"only booked appointments can be rescheduled"}), 400
 
-    # Check 1: Doctor Availability
     ok, msg = _is_doctor_available_on(appt.doctor_id, start_dt, end_dt)
     if not ok:
         return jsonify({"msg":msg}), 400
 
-    # Check 2: Patient Self-Overlap (ADDED)
     patient_conflict = Appointment.query.filter(
         Appointment.patient_id == pid,
         Appointment.status != "cancelled",
-        Appointment.id != appt_id, # Ignore self
+        Appointment.id != appt_id,
         Appointment.start_time < end_dt,
         Appointment.end_time > start_dt
     ).first()
@@ -309,7 +298,6 @@ def reschedule_appointment(appt_id):
     if patient_conflict:
         return jsonify({"msg": "You already have another appointment booked during this time."}), 400
 
-    # Check 3: Doctor Concurrency
     overlap_filter = and_(
         Appointment.doctor_id == appt.doctor_id,
         Appointment.status != "cancelled",

@@ -1,6 +1,8 @@
+# backend/routes/reports.py
 from flask import Blueprint, request, jsonify, send_file, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from backend.utils.utils import role_required
+# FIX: Import directly from utils
+from utils.utils import role_required
 from database import db
 from models import Appointment, Doctor, User, Patient
 from datetime import datetime, date
@@ -30,7 +32,6 @@ def _month_range(ym: str):
 @jwt_required()
 @role_required(["admin","doctor"])
 def monthly_json():
-    # JSON Endpoint: Returns Summary Stats for Frontend Charts
     month = request.args.get("month")
     if not month:
         return jsonify({"msg":"month required (YYYY-MM)"}), 400
@@ -76,7 +77,6 @@ def monthly_json():
 @jwt_required()
 @role_required(["admin","doctor"])
 def monthly_csv():
-    # CSV Endpoint: Returns Detailed Records (Best for Excel analysis)
     month = request.args.get("month")
     if not month:
         return jsonify({"msg":"month required"}), 400
@@ -128,7 +128,6 @@ def monthly_csv():
 @jwt_required()
 @role_required(["admin","doctor"])
 def monthly_pdf():
-    # PDF Endpoint: COMBINED (Summary Page + Detailed Pages)
     month = request.args.get("month")
     if not month:
         return jsonify({"msg":"month required"}), 400
@@ -140,7 +139,6 @@ def monthly_pdf():
     user_id = _current_user_id()
     doctor_id = request.args.get("doctor_id")
 
-    # 1. Fetch Summary Stats
     q_date_stats = db.session.query(func.date(Appointment.start_time).label("d"), func.count(Appointment.id).label("c")) \
         .filter(Appointment.start_time >= start, Appointment.start_time < end)
     
@@ -148,7 +146,6 @@ def monthly_pdf():
         .join(Appointment, Appointment.doctor_id == Doctor.id) \
         .filter(Appointment.start_time >= start, Appointment.start_time < end)
 
-    # 2. Fetch Detailed Records
     q_details = Appointment.query.filter(Appointment.start_time >= start, Appointment.start_time < end)
 
     if doctor_id:
@@ -171,9 +168,6 @@ def monthly_pdf():
     left = 20 * mm
     top = height - 20 * mm
 
-    # ==========================
-    # PAGE 1: SUMMARY DASHBOARD
-    # ==========================
     p.setFont("Helvetica-Bold", 16)
     p.drawString(left, top, f"HMS Monthly Report — {month}")
     p.setFont("Helvetica", 10)
@@ -181,7 +175,6 @@ def monthly_pdf():
     
     y = top - 40
     
-    # Section: By Date
     p.setFont("Helvetica-Bold", 12)
     p.drawString(left, y, "Daily Summary")
     y -= 15
@@ -197,7 +190,6 @@ def monthly_pdf():
     
     y -= 10
     
-    # Section: By Specialization
     p.setFont("Helvetica-Bold", 12)
     p.drawString(left, y, "By Specialization")
     y -= 15
@@ -209,17 +201,13 @@ def monthly_pdf():
         p.drawString(left + 60*mm, y, str(cnt))
         y -= 12
 
-    # ==========================
-    # PAGE 2+: DETAILED LIST
-    # ==========================
     p.showPage() 
-    y = top # Reset Y to top of new page
+    y = top 
     
     p.setFont("Helvetica-Bold", 14)
     p.drawString(left, y, "Detailed Appointment List")
     y -= 25
     
-    # Table Headers
     p.setFont("Helvetica-Bold", 9)
     p.drawString(left, y, "Date/Time")
     p.drawString(left + 35*mm, y, "Patient")
@@ -230,7 +218,6 @@ def monthly_pdf():
     p.setFont("Helvetica", 8)
 
     for a in appts:
-        # Check if we need a new page
         if y < 20 * mm:
             p.showPage()
             y = top
@@ -240,7 +227,7 @@ def monthly_pdf():
         p_name = (a.patient.user.name if a.patient and a.patient.user else "Unknown")[:18]
         d_name = (a.doctor.user.name if a.doctor and a.doctor.user else "Unknown")[:18]
         status = a.status
-        diag = (a.treatment.diagnosis if a.treatment else "")[:25] # Truncate long text
+        diag = (a.treatment.diagnosis if a.treatment else "")[:25] 
 
         p.drawString(left, y, d_str)
         p.drawString(left + 35*mm, y, p_name)

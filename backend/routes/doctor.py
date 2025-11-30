@@ -3,11 +3,13 @@ from flask import Blueprint, request, jsonify, send_file, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import *
 from database import db
-from backend.utils.utils import role_required
+# FIX: Import directly from utils
+from utils.utils import role_required
 from datetime import datetime, date, timedelta, time as dt_time
 from extensions import cache
-from backend.utils.cache_utils import cache_response
-from backend.utils.redis_utils import bump_namespace, get_namespace_version
+# FIX: Import directly from utils
+from utils.cache_utils import cache_response
+from utils.redis_utils import bump_namespace, get_namespace_version
 import io, csv
 
 doctor_bp = Blueprint("doctor_bp", __name__)
@@ -27,7 +29,6 @@ def _doctor_id_from_token():
     except Exception:
         return ident
 
-# APPOINTMENTS LIST
 @doctor_bp.route("/appointments", methods=["GET"])
 @jwt_required()
 @role_required([UserRole.DOCTOR])
@@ -59,7 +60,6 @@ def list_appointments():
         })
     return jsonify(result), 200
 
-# TREATMENT
 @doctor_bp.route("/appointments/<int:appt_id>/treatment", methods=["POST"])
 @jwt_required()
 @role_required([UserRole.DOCTOR])
@@ -105,7 +105,6 @@ def treatment(appt_id):
         db.session.rollback()
         return jsonify({"msg": "Failed to save treatment", "error": str(e)}), 500
 
-# CANCEL APPOINTMENT
 @doctor_bp.route("/appointments/<int:appt_id>/cancel", methods=["POST"])
 @jwt_required()
 @role_required([UserRole.DOCTOR])
@@ -128,7 +127,6 @@ def cancel_appointment(appt_id):
 
     return jsonify({"msg": "Appointment cancelled successfully"}), 200
 
-# PATIENT LIST & HISTORY
 @doctor_bp.route("/patients", methods=["GET"])
 @jwt_required()
 @role_required([UserRole.DOCTOR])
@@ -218,7 +216,6 @@ def patient_history(patient_id):
         })
     return jsonify({"history": phist}), 200
 
-# AVAILABILITY (cached)
 @doctor_bp.route("/availability/next", methods=["GET"])
 @jwt_required()
 @role_required([UserRole.DOCTOR])
@@ -336,7 +333,6 @@ def set_override():
 
     return jsonify({"msg":"override saved"}), 200
 
-# EXPORT (CSV) - UPDATED TO INCLUDE DETAILS
 @doctor_bp.route("/appointments/export", methods=["GET"])
 @jwt_required()
 @role_required([UserRole.DOCTOR])
@@ -346,7 +342,6 @@ def export_appointments_csv():
     output = io.StringIO()
     writer = csv.writer(output)
     
-    # Updated Headers
     writer.writerow(["ID","Patient ID","Patient Name","Date","Start Time","End Time","Status","Problem", "Diagnosis", "Prescription", "Notes"])
     
     for a in appts:
@@ -359,7 +354,6 @@ def export_appointments_csv():
             a.end_time.strftime("%H:%M") if a.end_time else "",
             a.status,
             a.problem or "",
-            # Treatment Details
             a.treatment.diagnosis if a.treatment else "",
             a.treatment.prescription if a.treatment else "",
             a.treatment.notes if a.treatment else ""

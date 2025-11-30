@@ -4,17 +4,14 @@ from werkzeug.security import generate_password_hash
 from flask_jwt_extended import jwt_required
 from database import db
 from models import *
-from backend.utils.utils import role_required
+# FIX: Import directly from utils
+from utils.utils import role_required
 from tasks import export_appointments_csv
 from celery.result import AsyncResult
-from backend.utils.redis_utils import bump_namespace
-# Added imports for availability logic
+from utils.redis_utils import bump_namespace
 from datetime import datetime, date, timedelta, time as dt_time
 
 admin_bp = Blueprint("admin_bp", __name__)
-
-# ... [KEEP EXISTING ROUTES: create_doctor, list_doctors, get_doc, update_doc, delete_doc, etc.] ...
-# ... [Paste the existing routes here or keep them as is] ...
 
 @admin_bp.route("/create_doctor", methods=["POST"])
 @jwt_required()
@@ -115,7 +112,6 @@ def update_doc(doctor_id):
 def delete_doc(doctor_id):
     d = Doctor.query.get_or_404(doctor_id)
     
-    # Check for existing appointments to prevent IntegrityError
     if Appointment.query.filter_by(doctor_id=doctor_id).first():
         return jsonify({"msg": "Cannot delete doctor with existing appointments."}), 400
 
@@ -224,8 +220,6 @@ def task_status(task_id):
     res = AsyncResult(task_id)
     return jsonify({"id": task_id, "status": res.status, "result": res.result}), 200
 
-# --- NEW: Availability Routes for Admin ---
-
 @admin_bp.route("/doctors/<int:doctor_id>/availability/next", methods=["GET"])
 @jwt_required()
 @role_required([UserRole.ADMIN])
@@ -291,7 +285,6 @@ def set_doctor_weekly_availability(doctor_id):
         except Exception:
             continue
         
-        # Check start < end
         if st and en and st >= en:
              return jsonify({"msg": "Start time must be before end time"}), 400
 

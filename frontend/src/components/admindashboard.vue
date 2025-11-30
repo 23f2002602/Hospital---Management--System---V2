@@ -1,143 +1,165 @@
 <template>
     <div class="container mt-4">
-        <h2>Admin Panel</h2>
+        <h2 class="mb-4">Admin Panel</h2>
 
-        <div class="row">
-            <div class="col-md-6 mb-4">
-                <div class="card p-3 h-100">
-                    <h5>Create Doctor</h5>
+        <div class="row g-4">
+            <div class="col-12 col-lg-6">
+                <div class="card p-4 h-100 shadow-sm border-0">
+                    <h5 class="card-title mb-3">Create Doctor</h5>
                     <form @submit.prevent="createDoctor">
-                        <input v-model="form.name" placeholder="Name" class="form-control mb-2" required/>
-                        <input v-model="form.email" type="email" placeholder="Email" class="form-control mb-2" required/>
-                        <input v-model="form.password" type="password" placeholder="Password" class="form-control mb-2" required/>
-                        <input v-model="form.specialization" placeholder="Specialization" class="form-control mb-2"/>
-                        <select v-model="form.department_id" class="form-control mb-2">
-                            <option :value="null">-- Select Department --</option>
-                            <option v-for="d in departments" :key="d.id" :value="d.id">{{ d.name }}</option>
-                        </select>
+                        <div class="mb-3">
+                            <input v-model="form.name" placeholder="Full Name" class="form-control" required/>
+                        </div>
+                        <div class="mb-3">
+                            <input v-model="form.email" type="email" placeholder="Email Address" class="form-control" required/>
+                        </div>
+                        <div class="mb-3">
+                            <input v-model="form.password" type="password" placeholder="Password" class="form-control" required/>
+                        </div>
+                        <div class="mb-3">
+                            <input v-model="form.specialization" placeholder="Specialization" class="form-control"/>
+                        </div>
+                        <div class="mb-3">
+                            <select v-model="form.department_id" class="form-select">
+                                <option :value="null">-- Select Department --</option>
+                                <option v-for="d in departments" :key="d.id" :value="d.id">{{ d.name }}</option>
+                            </select>
+                        </div>
                         <button type="submit" class="btn btn-success w-100">Create Doctor</button>
                     </form>
                 </div>
             </div>
 
-            <div class="col-md-6 mb-4">
-                <div class="card p-3 h-100">
-                    <h5>Departments</h5>
-                    <form @submit.prevent="createDepartment">
-                        <input v-model="dept.name" placeholder="Dept Name" class="form-control mb-2" required/>
-                        <input v-model="dept.description" placeholder="Description" class="form-control mb-2"/>
-                        <button class="btn btn-primary w-100">Add Department</button>
+            <div class="col-12 col-lg-6">
+                <div class="card p-4 h-100 shadow-sm border-0">
+                    <h5 class="card-title mb-3">Departments</h5>
+                    <form @submit.prevent="createDepartment" class="mb-4">
+                        <div class="input-group mb-2">
+                            <input v-model="dept.name" placeholder="Dept Name" class="form-control" required/>
+                            <button class="btn btn-primary">Add</button>
+                        </div>
+                        <input v-model="dept.description" placeholder="Description (optional)" class="form-control form-control-sm"/>
                     </form>
 
-                    <ul class="list-group mt-3">
-                        <li v-for="d in departments" :key="d.id" class="list-group-item d-flex justify-content-between align-items-center">
-                            <span><strong>{{ d.name }}</strong> <small class="text-muted">({{ d.description }})</small></span>
-                            <button class="btn btn-sm btn-danger" @click="deleteDept(d.id)">Delete</button>
-                        </li>
-                    </ul>
+                    <div class="list-group list-group-flush border rounded overflow-auto" style="max-height: 300px;">
+                        <div v-for="d in departments" :key="d.id" class="list-group-item d-flex justify-content-between align-items-center">
+                            <div class="text-truncate me-2">
+                                <strong>{{ d.name }}</strong> 
+                                <span class="text-muted d-block small text-truncate">{{ d.description }}</span>
+                            </div>
+                            <button class="btn btn-sm btn-outline-danger" @click="deleteDept(d.id)">Delete</button>
+                        </div>
+                        <div v-if="departments.length === 0" class="p-3 text-center text-muted">No departments yet.</div>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <hr/>
+        <hr class="my-5"/>
 
-        <div class="card p-3 mt-3">
+        <div class="card p-4 shadow-sm border-0">
             <h5 class="mb-3">Doctors List</h5>
             <div class="table-responsive">
-                <table class="table table-hover align-middle">
-                    <thead>
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
                         <tr>
                             <th>Name</th>
                             <th>Email</th>
                             <th>Specialization</th>
                             <th>Department</th>
-                            <th>Actions</th>
+                            <th class="text-end">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr v-for="d in doctors" :key="d.id">
-                            <td>{{ d.name }}</td>
+                            <td class="fw-medium">{{ d.name }}</td>
                             <td>{{ d.email }}</td>
-                            <td>{{ d.specialization }}</td>
+                            <td><span class="badge bg-light text-dark border">{{ d.specialization || 'N/A' }}</span></td>
                             <td>{{ getDeptName(d.department_id) }}</td>
-                            <td>
-                                <button class="btn btn-sm btn-secondary me-2" @click="openScheduleModal(d)">Schedule</button>
-                                <button class="btn btn-sm btn-info me-2" @click="editDoctor(d)">Edit</button>
-                                <button class="btn btn-sm btn-danger" @click="deleteDoctor(d.id)">Delete</button>
+                            <td class="text-end text-nowrap">
+                                <button class="btn btn-sm btn-outline-secondary me-1" @click="openScheduleModal(d)" title="Schedule">📅</button>
+                                <button class="btn btn-sm btn-outline-info me-1" @click="editDoctor(d)" title="Edit">✏️</button>
+                                <button class="btn btn-sm btn-outline-danger" @click="deleteDoctor(d.id)" title="Delete">🗑️</button>
                             </td>
                         </tr>
                         <tr v-if="doctors.length === 0">
-                            <td colspan="5" class="text-center text-muted">No doctors found.</td>
+                            <td colspan="5" class="text-center text-muted py-4">No doctors found.</td>
                         </tr>
                     </tbody>
                 </table>
             </div>
         </div>
 
-        <div v-if="editing" class="card p-3 mt-3 border-info">
-            <h6>Edit Doctor: {{ editing.name }}</h6>
+        <div v-if="editing" class="card p-4 mt-4 border-info shadow">
+            <h6 class="text-primary mb-3">Edit Doctor: {{ editing.name }}</h6>
             <form @submit.prevent="saveEdit">
-                <div class="row g-2">
-                    <div class="col-md-3">
-                        <input v-model="editing.name" class="form-control" placeholder="Name" required />
+                <div class="row g-3">
+                    <div class="col-12 col-md-6 col-lg-3">
+                        <label class="form-label small">Name</label>
+                        <input v-model="editing.name" class="form-control" required />
                     </div>
-                    <div class="col-md-3">
-                        <input v-model="editing.email" class="form-control" placeholder="Email" required />
+                    <div class="col-12 col-md-6 col-lg-3">
+                        <label class="form-label small">Email</label>
+                        <input v-model="editing.email" class="form-control" required />
                     </div>
-                    <div class="col-md-3">
-                        <input v-model="editing.specialization" class="form-control" placeholder="Specialization" />
+                    <div class="col-12 col-md-6 col-lg-3">
+                        <label class="form-label small">Specialization</label>
+                        <input v-model="editing.specialization" class="form-control" />
                     </div>
-                    <div class="col-md-3">
-                        <select v-model="editing.department_id" class="form-control">
+                    <div class="col-12 col-md-6 col-lg-3">
+                        <label class="form-label small">Department</label>
+                        <select v-model="editing.department_id" class="form-select">
                             <option :value="null">-- No Department --</option>
                             <option v-for="d in departments" :key="d.id" :value="d.id">{{ d.name }}</option>
                         </select>
                     </div>
                 </div>
-                <div class="mt-2 d-flex gap-2 justify-content-end">
+                <div class="mt-3 d-flex gap-2 justify-content-end">
                     <button type="button" class="btn btn-secondary" @click="cancelEdit">Cancel</button>
-                    <button type="submit" class="btn btn-success">Save Changes</button>
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
                 </div>
             </form>
         </div>
 
         <div class="modal fade" tabindex="-1" ref="scheduleModal">
-            <div class="modal-dialog">
+            <div class="modal-dialog modal-dialog-centered">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title">Manage Schedule: {{ selectedDoctor?.name }}</h5>
+                        <h5 class="modal-title">Manage Schedule</h5>
                         <button type="button" class="btn-close" @click="closeScheduleModal"></button>
                     </div>
                     <div class="modal-body">
-                        <div class="alert alert-info py-2 small mb-3">
-                            Currently set for: 
-                            <span v-for="d in doctorAvailability" :key="d.day" class="badge bg-light text-dark border me-1">
-                                {{ d.day }}: {{ d.is_available ? `${d.start_time}-${d.end_time}` : 'Off' }}
+                        <p class="text-muted small">Doctor: <strong>{{ selectedDoctor?.name }}</strong></p>
+                        
+                        <div class="d-flex flex-wrap gap-2 mb-3">
+                            <span v-for="d in doctorAvailability" :key="d.day" 
+                                  :class="['badge', d.is_available ? 'bg-success' : 'bg-secondary']">
+                                {{ d.day.substring(0,3) }}
                             </span>
                         </div>
 
                         <form @submit.prevent="saveSchedule">
                             <div class="mb-3">
-                                <label class="form-label">Day (Next 7 Days)</label>
-                                <select v-model="scheduleForm.day" class="form-control">
+                                <label class="form-label">Select Day</label>
+                                <select v-model="scheduleForm.day" class="form-select">
                                     <option v-for="d in next7Days" :key="d.value" :value="d.value">
                                         {{ d.label }}
                                     </option>
                                 </select>
                             </div>
-                            <div class="row mb-3">
+                            <div class="row g-2 mb-3">
                                 <div class="col">
-                                    <label class="form-label">Start Time</label>
+                                    <label class="form-label">Start</label>
                                     <input type="time" v-model="scheduleForm.start" class="form-control">
                                 </div>
                                 <div class="col">
-                                    <label class="form-label">End Time</label>
+                                    <label class="form-label">End</label>
                                     <input type="time" v-model="scheduleForm.end" class="form-control">
                                 </div>
                             </div>
-                            <div class="form-check mb-3">
+                            <div class="form-check form-switch mb-3">
                                 <input type="checkbox" class="form-check-input" id="availCheck" v-model="scheduleForm.is_active">
-                                <label class="form-check-label" for="availCheck">Available on this day</label>
+                                <label class="form-check-label" for="availCheck">Available</label>
                             </div>
                             <button class="btn btn-primary w-100">Update Schedule</button>
                         </form>
@@ -162,8 +184,6 @@ export default {
             doctors: [],
             departments: [],
             editing: null,
-            
-            // Schedule Data
             selectedDoctor: null,
             scheduleModalInstance: null,
             doctorAvailability: [],
@@ -216,7 +236,24 @@ export default {
                 alert(e.response?.data?.msg || "Failed to create doctor");
             }
         },
-        // ... [Edit/Delete/Dept methods unchanged] ...
+        async createDepartment() {
+            try {
+                await api.post('/admin/departments', this.dept);
+                this.dept = { name: '', description: '' };
+                this.fetchAll();
+            } catch (e) {
+                alert(e.response?.data?.msg || "Failed to add department");
+            }
+        },
+        async deleteDept(id) {
+            if (!confirm("Delete department?")) return;
+            try {
+                await api.delete(`/admin/departments/${id}`);
+                this.fetchAll();
+            } catch (e) {
+                alert("Failed to delete");
+            }
+        },
         editDoctor(d) {
             this.editing = JSON.parse(JSON.stringify(d)); 
         },
@@ -241,34 +278,11 @@ export default {
                 alert(e.response?.data?.msg || "Failed to delete");
             }
         },
-        async createDepartment() {
-            try {
-                await api.post('/admin/departments', this.dept);
-                this.dept = { name: '', description: '' };
-                this.fetchAll();
-            } catch (e) {
-                alert(e.response?.data?.msg || "Failed to add department");
-            }
-        },
-        async deleteDept(id) {
-            if (!confirm("Delete department?")) return;
-            try {
-                await api.delete(`/admin/departments/${id}`);
-                this.fetchAll();
-            } catch (e) {
-                alert("Failed to delete");
-            }
-        },
-
-        // --- NEW: Schedule Methods ---
         async openScheduleModal(doctor) {
             this.selectedDoctor = doctor;
-            // Set default day to today
             const today = new Date();
             const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
             this.scheduleForm.day = dayNames[today.getDay()];
-            
-            // Fetch current availability
             try {
                 const res = await api.get(`/admin/doctors/${doctor.id}/availability/next`);
                 this.doctorAvailability = res.data;
@@ -276,7 +290,6 @@ export default {
                 console.error(e);
                 this.doctorAvailability = [];
             }
-            
             this.scheduleModalInstance.show();
         },
         closeScheduleModal() {

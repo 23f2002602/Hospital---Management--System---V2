@@ -1,9 +1,11 @@
+# backend/routes/tasks.py
 from pathlib import Path
 from flask import Blueprint, jsonify, request, send_file, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from celery.result import AsyncResult
 from tasks import export_treatment_history, generate_monthly_report, send_daily_reminders
-from backend.utils.utils import role_required
+# FIX: Import directly from utils
+from utils.utils import role_required
 from models import *
 from database import db
 import os
@@ -14,7 +16,6 @@ tasks_bp = Blueprint("tasks_bp", __name__)
 @jwt_required()
 @role_required([UserRole.PATIENT])
 def trigger_patient_export():
-    # get_jwt_identity should return the current user's id (int or str)
     patient_id = int(get_jwt_identity())
     task = export_treatment_history.delay(patient_id)
     return jsonify({"task_id": task.id}), 202
@@ -42,5 +43,4 @@ def download_file():
     path = request.args.get("path")
     if not path or not os.path.exists(path):
         return jsonify({"msg":"file not found"}), 404
-    # you may add permission checks here
     return send_file(path, as_attachment=True)
