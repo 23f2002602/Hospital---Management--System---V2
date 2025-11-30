@@ -3,11 +3,11 @@ from flask import Blueprint, request, jsonify, send_file, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import *
 from database import db
-from utils import role_required
+from backend.utils.utils import role_required
 from datetime import datetime, date, timedelta, time as dt_time
 from extensions import cache
-from cache_utils import cache_response
-from redis_utils import bump_namespace, get_namespace_version
+from backend.utils.cache_utils import cache_response
+from backend.utils.redis_utils import bump_namespace, get_namespace_version
 import io, csv
 
 doctor_bp = Blueprint("doctor_bp", __name__)

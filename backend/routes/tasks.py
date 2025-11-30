@@ -3,7 +3,7 @@ from flask import Blueprint, jsonify, request, send_file, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from celery.result import AsyncResult
 from tasks import export_treatment_history, generate_monthly_report, send_daily_reminders
-from utils import role_required
+from backend.utils.utils import role_required
 from models import *
 from database import db
 import os

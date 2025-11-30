@@ -4,10 +4,10 @@ from werkzeug.security import generate_password_hash
 from flask_jwt_extended import jwt_required
 from database import db
 from models import *
-from utils import role_required
+from backend.utils.utils import role_required
 from tasks import export_appointments_csv
 from celery.result import AsyncResult
-from redis_utils import bump_namespace
+from backend.utils.redis_utils import bump_namespace
 # Added imports for availability logic
 from datetime import datetime, date, timedelta, time as dt_time
 

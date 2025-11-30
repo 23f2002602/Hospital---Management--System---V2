@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify, send_file, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from utils import role_required
+from backend.utils.utils import role_required
 from database import db
 from models import Appointment, Doctor, User, Patient
 from datetime import datetime, date
