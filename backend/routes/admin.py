@@ -41,7 +41,6 @@ def create_doctor():
     db.session.add(doc)
     db.session.commit()
 
-    # bump doctors search namespace to invalidate cached searches
     try:
         bump_namespace("ns:doctors_search_version")
     except Exception:
@@ -61,7 +60,8 @@ def list_doctors():
             "name": doc.user.name if doc.user else None,
             "email": doc.user.email if doc.user else None,
             "specialization": doc.specialization,
-            "department": doc.department_id
+            # FIXED: Changed key from 'department' to 'department_id'
+            "department_id": doc.department_id 
         })
     return jsonify(result), 200
 
@@ -75,7 +75,8 @@ def get_doc(doctor_id):
         "name": d.user.name if d.user else None,
         "email": d.user.email if d.user else None,
         "specialization": d.specialization,
-        "department": d.department_id
+        # FIXED: Changed key from 'department' to 'department_id'
+        "department_id": d.department_id
     }), 200
 
 @admin_bp.route("/doctors/<int:doctor_id>", methods=["PUT"])
@@ -98,7 +99,6 @@ def update_doc(doctor_id):
         d.department_id = data.get("department_id")
     db.session.commit()
 
-    # bump doctors search namespace
     try:
         bump_namespace("ns:doctors_search_version")
     except Exception:
@@ -121,7 +121,6 @@ def delete_doc(doctor_id):
         db.session.rollback()
         return jsonify({"msg":"Failed to delete doctor","error":str(e)}), 500
 
-    # bump doctors search namespace
     try:
         bump_namespace("ns:doctors_search_version")
     except Exception:

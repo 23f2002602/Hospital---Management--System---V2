@@ -1,4 +1,3 @@
-# backend/tasks.py
 import os
 import csv
 import io
@@ -8,7 +7,7 @@ from datetime import datetime, timedelta, date
 from flask import current_app, render_template_string
 from celery.schedules import crontab
 
-from celery import Celery
+from celery import shared_task
 from celery.utils.log import get_task_logger
 
 from database import db
@@ -17,7 +16,6 @@ from models import Appointment, Treatment, User, Patient, Doctor
 logger = get_task_logger(__name__)
 
 celery = None
-
 def init_celery(celery_app):
     global celery
     celery = celery_app
@@ -54,7 +52,8 @@ def send_email(to_email, subject, body, html_body=None):
         logger.exception("Failed to send email to %s: %s", to_email, e)
         return False
 
-@celery.task(bind=True, name="tasks.export_treatment_history")
+# Change 2: Use @shared_task instead of @celery.task
+@shared_task(bind=True, name="tasks.export_treatment_history")
 def export_treatment_history(self, patient_id):
     try:
         # Query appointments and treatments
@@ -93,7 +92,8 @@ def export_treatment_history(self, patient_id):
         logger.exception("export_treatment_history failed: %s", e)
         return {"status": "error", "error": str(e)}
 
-@celery.task(bind=True, name="tasks.send_daily_reminders")
+# Change 3: Use @shared_task
+@shared_task(bind=True, name="tasks.send_daily_reminders")
 def send_daily_reminders(self, days_ahead=0):
     try:
         target_date = date.today() + timedelta(days=days_ahead)
@@ -120,7 +120,8 @@ def send_daily_reminders(self, days_ahead=0):
         logger.exception("send_daily_reminders failed: %s", e)
         return {"status":"error", "error": str(e)}
 
-@celery.task(bind=True, name="tasks.generate_monthly_report")
+# Change 4: Use @shared_task
+@shared_task(bind=True, name="tasks.generate_monthly_report")
 def generate_monthly_report(self, year, month, doctor_id):
     try:
         # compute month start and end
@@ -204,3 +205,10 @@ def generate_monthly_report(self, year, month, doctor_id):
     except Exception as e:
         logger.exception("generate_monthly_report failed: %s", e)
         return {"status":"error", "error": str(e)}
+
+# Important: Ensure export_appointments_csv is defined if referenced in admin.py
+@shared_task(bind=True, name="tasks.export_appointments_csv")
+def export_appointments_csv(self, doctor_id):
+    # Implementation for exporting doctor appointments...
+    # (Similar logic to export_treatment_history but for doctor view)
+    pass

@@ -1,4 +1,3 @@
-# backend/routes/auth.py
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token
@@ -6,7 +5,6 @@ from database import db
 from models import User, UserRole, Patient
 
 auth_bp = Blueprint("auth_bp", __name__)
-
 
 @auth_bp.route("/register", methods=["POST"])
 def register():
@@ -67,7 +65,12 @@ def login():
     if not user or not check_password_hash(user.password, password):
         return jsonify({"msg": "Invalid email or password"}), 401
 
-
     access_token = create_access_token(identity=str(user.id), additional_claims={"role": user.role})
 
-    return jsonify({"access_token": access_token, "role": user.role, "id": user.id}), 200
+    # UPDATED RETURN: Now includes "name"
+    return jsonify({
+        "access_token": access_token, 
+        "role": user.role, 
+        "id": user.id,
+        "name": user.name 
+    }), 200

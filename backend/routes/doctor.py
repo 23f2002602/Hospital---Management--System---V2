@@ -39,24 +39,9 @@ def list_appointments():
     if status:
         q = q.filter_by(status=status)
 
-    frm = request.args.get("from")
-    to = request.args.get("to")
-    if frm:
-        try:
-            frm_dt = datetime.fromisoformat(frm)
-            q = q.filter(Appointment.start_time >= frm_dt)
-        except Exception:
-            pass
-    if to:
-        try:
-            to_dt = datetime.fromisoformat(to)
-            q = q.filter(Appointment.start_time <= to_dt)
-        except Exception:
-            pass
-
     upcoming = request.args.get("upcoming")
     if upcoming and upcoming.lower() in ("1", "true", "yes"):
-        q = q.filter(Appointment.start_time >= datetime.utcnow())
+        q = q.filter(Appointment.status == "booked")
 
     q = q.order_by(Appointment.start_time.asc())
     appts = q.all()
@@ -65,10 +50,10 @@ def list_appointments():
         result.append({
             "id": a.id,
             "patient_id": a.patient_id,
-            "patient_name": getattr(a.patient.user, "name", None),
+            "patient_name": getattr(a.patient.user, "name", None) if a.patient and a.patient.user else "Unknown",
             "start_time": a.start_time.isoformat() if a.start_time else None,
             "end_time": a.end_time.isoformat() if a.end_time else None,
-            "date": a.date.isoformat() if a.date else (a.start_time.date().isoformat() if a.start_time else None),
+            "date": a.date.isoformat() if a.date else None,
             "status": a.status,
             "problem": a.problem
         })
@@ -98,24 +83,27 @@ def treatment(appt_id):
     if appt.treatment:
         return jsonify({"msg": "Treatment already recorded for this appointment"}), 400
 
-    treatment = Treatment(
-        appointment_id=appt.id,
-        diagnosis=diagnosis,
-        prescription=prescription,
-        notes=notes
-    )
-    appt.status = "completed"
-    db.session.add(treatment)
-    db.session.add(appt)
-    db.session.commit()
-
-    # bump availability namespace so caches invalidate
     try:
-        bump_namespace(f"ns:doctor:{doctor_id}:availability_version")
-    except Exception:
-        current_app.logger.exception("Failed to bump availability namespace after treatment")
+        treatment = Treatment(
+            appointment_id=appt.id,
+            diagnosis=diagnosis,
+            prescription=prescription,
+            notes=notes
+        )
+        appt.status = "completed"
+        db.session.add(treatment)
+        db.session.add(appt)
+        db.session.commit()
 
-    return jsonify({"msg": "Treatment recorded successfully and appointment completed"}), 201
+        try:
+            bump_namespace(f"ns:doctor:{doctor_id}:availability_version")
+        except Exception:
+            current_app.logger.exception("Failed to bump availability namespace after treatment")
+
+        return jsonify({"msg": "Treatment recorded successfully and appointment completed"}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"msg": "Failed to save treatment", "error": str(e)}), 500
 
 # CANCEL APPOINTMENT
 @doctor_bp.route("/appointments/<int:appt_id>/cancel", methods=["POST"])
@@ -133,7 +121,6 @@ def cancel_appointment(appt_id):
     db.session.add(appt)
     db.session.commit()
 
-    # bump availability namespace
     try:
         bump_namespace(f"ns:doctor:{doctor_id}:availability_version")
     except Exception:
@@ -258,8 +245,8 @@ def next_available_slot():
             wa = weekly.get(weekday)
             if wa and wa.is_available:
                 is_avail = True
-                start = wa.start_time.isoformat() if wa.start_time else None
-                end = wa.end_time.isoformat() if wa.end_time else None
+                start = wa.start_time.strftime("%H:%M") if wa.start_time else None
+                end = wa.end_time.strftime("%H:%M") if wa.end_time else None
             else:
                 is_avail = False
                 start = None
@@ -295,11 +282,11 @@ def set_weekly_availability():
         en = None
         try:
             if start:
-                h, m = map(int, start.split(":"))
-                st = dt_time(hour=h, minute=m)
+                pts = list(map(int, start.split(":")))
+                st = dt_time(hour=pts[0], minute=pts[1])
             if end:
-                h, m = map(int, end.split(":"))
-                en = dt_time(hour=h, minute=m)
+                pts = list(map(int, end.split(":")))
+                en = dt_time(hour=pts[0], minute=pts[1])
         except Exception:
             continue
 
@@ -314,7 +301,6 @@ def set_weekly_availability():
 
     db.session.commit()
 
-    # bump availability namespace
     try:
         bump_namespace(f"ns:doctor:{doctor_id}:availability_version")
     except Exception:
@@ -343,7 +329,6 @@ def set_override():
         db.session.add(DoctorAvailabilityOverride(doctor_id=doctor_id, date=dobj, is_available=is_avail))
     db.session.commit()
 
-    # bump availability namespace
     try:
         bump_namespace(f"ns:doctor:{doctor_id}:availability_version")
     except Exception:
@@ -351,7 +336,7 @@ def set_override():
 
     return jsonify({"msg":"override saved"}), 200
 
-# EXPORT (CSV)
+# EXPORT (CSV) - UPDATED TO INCLUDE DETAILS
 @doctor_bp.route("/appointments/export", methods=["GET"])
 @jwt_required()
 @role_required([UserRole.DOCTOR])
@@ -360,19 +345,27 @@ def export_appointments_csv():
     appts = Appointment.query.filter_by(doctor_id=doctor_id).order_by(Appointment.start_time).all()
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["id","patient_id","patient_name","start_time","end_time","status","problem"])
+    
+    # Updated Headers
+    writer.writerow(["ID","Patient ID","Patient Name","Date","Start Time","End Time","Status","Problem", "Diagnosis", "Prescription", "Notes"])
+    
     for a in appts:
         writer.writerow([
             a.id,
             a.patient_id,
-            a.patient.user.name if a.patient and a.patient.user else "",
-            a.start_time.isoformat() if a.start_time else "",
-            a.end_time.isoformat() if a.end_time else "",
+            a.patient.user.name if a.patient and a.patient.user else "Unknown",
+            a.date.isoformat() if a.date else "",
+            a.start_time.strftime("%H:%M") if a.start_time else "",
+            a.end_time.strftime("%H:%M") if a.end_time else "",
             a.status,
-            a.problem or ""
+            a.problem or "",
+            # Treatment Details
+            a.treatment.diagnosis if a.treatment else "",
+            a.treatment.prescription if a.treatment else "",
+            a.treatment.notes if a.treatment else ""
         ])
     output.seek(0)
     return send_file(io.BytesIO(output.getvalue().encode("utf-8")),
                      mimetype="text/csv",
-                     download_name=f"appointments_doctor_{doctor_id}.csv",
+                     download_name=f"doctor_appointments.csv",
                      as_attachment=True)
