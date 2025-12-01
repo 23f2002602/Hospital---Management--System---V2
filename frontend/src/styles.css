@@ -34,7 +34,7 @@
   --bg-surface-alt: #334155; /* Slate 700 */
   
   --text-main: #f8fafc;     /* Slate 50 */
-  --text-muted: #94a3b8;    /* Slate 400 */
+  --text-muted: #cbd5e1;    /* Slate 300 (Brightened for better visibility) */
   
   --border-color: #334155;  /* Slate 700 */
   
@@ -67,6 +67,15 @@ h1, h2, h3, h4, h5, h6 {
   font-weight: 600;
 }
 
+/* Fix for bootstrap bg-white utility in Dark Mode */
+/* This ensures elements like the Search Bar icon background become dark */
+:root.theme-dark .bg-white,
+:root[data-theme="dark"] .bg-white {
+  background-color: var(--bg-surface) !important;
+  color: var(--text-main) !important;
+  border-color: var(--border-color) !important;
+}
+
 /* =========================================
    3. Bootstrap Component Overrides
    ========================================= */
@@ -87,7 +96,7 @@ h1, h2, h3, h4, h5, h6 {
 .form-control, .form-select {
   background-color: var(--input-bg);
   border-color: var(--border-color);
-  color: var(--text-main);
+  color: var(--text-main) !important; /* Force text color to be visible */
   border-radius: 8px;
   padding: 0.6rem 1rem;
 }
@@ -97,7 +106,10 @@ h1, h2, h3, h4, h5, h6 {
   color: var(--text-main);
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
 }
-.form-control::placeholder { color: var(--text-muted); opacity: 0.7; }
+.form-control::placeholder { 
+  color: var(--text-muted); 
+  opacity: 0.8; /* Increased opacity for visibility */
+}
 
 /* Buttons */
 .btn {
